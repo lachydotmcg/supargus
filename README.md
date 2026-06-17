@@ -27,6 +27,7 @@ supargus track import --requests workspace/requests/requests.json --tracker work
 supargus track list --tracker workspace/tracker.json
 supargus vault seal workspace/identity.example.json workspace/identity.sgvault
 supargus brokers validate
+supargus monitor scan --identity workspace/identity.sgvault --output-dir workspace --history-dir workspace/history
 supargus watchdog scan
 supargus app --workspace workspace
 ```
@@ -97,6 +98,16 @@ supargus track update fastpeoplesearch submitted --tracker workspace/tracker.jso
 supargus track list --tracker workspace/tracker.json --due
 ```
 
+Track reappearances between scans:
+
+```bash
+supargus monitor snapshot --matches workspace/broker_matches.json --history-dir workspace/history
+supargus monitor scan --identity workspace/identity.sgvault --output-dir workspace --history-dir workspace/history --limit 10
+supargus monitor diff --current workspace/broker_matches.json --history-dir workspace/history --output workspace/monitor_diff.json
+```
+
+`monitor scan` writes a fresh `broker_matches.json`, compares it with the latest snapshot when one exists, writes `monitor_diff.json`, and then saves the new snapshot.
+
 Open the local dashboard:
 
 ```bash
@@ -137,6 +148,7 @@ Supargus helps you separate those cases and keep pressure on them with a paper t
 | Takedown Studio | Generates broker-specific opt-out, deletion, CCPA, GDPR, and objection requests. |
 | Mail Runner | Sends reviewed requests through SMTP, Gmail, or another local email account you control. |
 | Compliance Tracker | Tracks sent requests, confirmations, denials, silence, reminders, and reappearance. |
+| Monitor | Diffs recurring scans to show new matches, reappearances, clears, and status changes. |
 | Local Watchdog | Scans your machine for proxy SDKs, suspicious network settings, browser extensions, startup entries, local listeners, and risky certificates. |
 | Report Builder | Produces local HTML, JSON, and evidence bundles. |
 
@@ -344,7 +356,7 @@ supargus track import --requests workspace/requests/requests.json --tracker work
 supargus track list --tracker workspace/tracker.json --due
 
 # 7. Re-check later by running the same scan again
-supargus scan --identity workspace/identity.example.json --output-dir workspace --watchdog
+supargus monitor scan --identity workspace/identity.sgvault --output-dir workspace --history-dir workspace/history --limit 10
 
 # 8. Scan your own machine
 supargus watchdog scan
@@ -376,6 +388,7 @@ Supargus will not:
 - [x] request template generator
 - [x] SMTP preview/send support
 - [x] compliance tracker
+- [x] recurring scan snapshots and reappearance diffs
 - [x] Windows-first watchdog scan
 - [ ] 20+ high-signal broker detectors
 

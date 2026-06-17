@@ -12,6 +12,7 @@ from .app import run_app
 from .identity import load_identity, sample_identity, save_identity
 from .mailer import load_smtp_config, preview_requests, send_requests
 from .models import BrokerMatch, to_dict
+from .monitor import diff_payload, latest_snapshot, save_snapshot, write_diff
 from .registry import load_registry, validate_registry
 from .report import matches_payload, watchdog_payload, write_html_report, write_json
 from .takedown import load_requests, prepare_requests
@@ -185,6 +186,41 @@ def cmd_vault_open(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_monitor_snapshot(args: argparse.Namespace) -> int:
+    out = save_snapshot(args.matches, args.history_dir)
+    print(f"Saved snapshot: {out}")
+    return 0
+
+
+def cmd_monitor_diff(args: argparse.Namespace) -> int:
+    previous = args.previous
+    if not previous:
+        latest = latest_snapshot(args.history_dir)
+        if not latest:
+            print("No previous snapshot found. Run `supargus monitor snapshot` first.")
+            return 2
+        previous = str(latest)
+    out = write_diff(previous, args.current, args.output)
+    payload = diff_payload(previous, args.current)
+    print(f"Wrote monitor diff: {out} ({payload['summary']['changes']} change(s))")
+    return 0
+
+
+def cmd_monitor_scan(args: argparse.Namespace) -> int:
+    identity = load_identity(args.identity)
+    brokers = load_registry(args.registry)
+    matches = search_brokers(brokers, identity, fetch=args.fetch, limit=args.limit, timeout=args.timeout)
+    output_dir = Path(args.output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    current_path = write_json(matches_payload(matches), output_dir / "broker_matches.json")
+    previous = latest_snapshot(args.history_dir)
+    if previous:
+        write_diff(previous, current_path, output_dir / "monitor_diff.json")
+    snapshot = save_snapshot(current_path, args.history_dir)
+    print(f"Wrote monitor scan to {output_dir}; snapshot: {snapshot}")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Supargus local-first privacy watchdog")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -286,6 +322,28 @@ def build_parser() -> argparse.ArgumentParser:
     p_vault_open.add_argument("output")
     p_vault_open.add_argument("--force", action="store_true")
     p_vault_open.set_defaults(func=cmd_vault_open)
+
+    p_monitor = sub.add_parser("monitor", help="snapshot and diff recurring broker scans")
+    monitor_sub = p_monitor.add_subparsers(dest="monitor_command", required=True)
+    p_monitor_snapshot = monitor_sub.add_parser("snapshot", help="save a broker match payload as the latest snapshot")
+    p_monitor_snapshot.add_argument("--matches", default="reports/broker_matches.json")
+    p_monitor_snapshot.add_argument("--history-dir", default="reports/history")
+    p_monitor_snapshot.set_defaults(func=cmd_monitor_snapshot)
+    p_monitor_diff = monitor_sub.add_parser("diff", help="compare previous and current broker match payloads")
+    p_monitor_diff.add_argument("--previous")
+    p_monitor_diff.add_argument("--current", required=True)
+    p_monitor_diff.add_argument("--history-dir", default="reports/history")
+    p_monitor_diff.add_argument("--output", default="reports/monitor_diff.json")
+    p_monitor_diff.set_defaults(func=cmd_monitor_diff)
+    p_monitor_scan = monitor_sub.add_parser("scan", help="run broker radar, diff against latest snapshot, and save a new snapshot")
+    p_monitor_scan.add_argument("--identity", required=True)
+    p_monitor_scan.add_argument("--registry", action="append")
+    p_monitor_scan.add_argument("--output-dir", default="reports/latest")
+    p_monitor_scan.add_argument("--history-dir", default="reports/history")
+    p_monitor_scan.add_argument("--fetch", action="store_true")
+    p_monitor_scan.add_argument("--limit", type=int)
+    p_monitor_scan.add_argument("--timeout", type=float, default=12.0)
+    p_monitor_scan.set_defaults(func=cmd_monitor_scan)
 
     p_app = sub.add_parser("app", help="serve the local Supargus dashboard")
     p_app.add_argument("--workspace", default="reports/latest")

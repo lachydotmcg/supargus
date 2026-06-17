@@ -24,6 +24,7 @@ def render_dashboard(workspace: str | Path) -> str:
     root = Path(workspace)
     broker = _load_json(root / "broker_matches.json")
     watchdog = _load_json(root / "watchdog.json")
+    monitor = _load_json(root / "monitor_diff.json")
     requests = _load_json(root / "requests/requests.json")
     if isinstance(requests, list):
         request_count = len(requests)
@@ -32,8 +33,10 @@ def render_dashboard(workspace: str | Path) -> str:
 
     broker_summary = broker.get("summary", {})
     watchdog_summary = watchdog.get("summary", {})
+    monitor_summary = monitor.get("summary", {})
     matches = broker.get("matches", [])[:12]
     findings = watchdog.get("findings", [])[:12]
+    changes = monitor.get("changes", [])[:12]
 
     match_rows = "\n".join(
         "<tr>"
@@ -52,6 +55,16 @@ def render_dashboard(workspace: str | Path) -> str:
         f"<pre>{escape(item.get('evidence', ''))}</pre>"
         "</section>"
         for item in findings
+    )
+    change_rows = "\n".join(
+        "<tr>"
+        f"<td>{escape(item.get('broker_name', ''))}</td>"
+        f"<td>{escape(item.get('change_type', ''))}</td>"
+        f"<td>{escape(item.get('previous_status', ''))}</td>"
+        f"<td>{escape(item.get('current_status', ''))}</td>"
+        f"<td>{escape(item.get('detail', ''))}</td>"
+        "</tr>"
+        for item in changes
     )
 
     return f"""<!doctype html>
@@ -89,6 +102,7 @@ def render_dashboard(workspace: str | Path) -> str:
     {_badge("Watchdog findings", watchdog_summary.get("findings", 0))}
     {_badge("High severity", watchdog_summary.get("high", 0))}
     {_badge("Request drafts", request_count)}
+    {_badge("Scan changes", monitor_summary.get("changes", 0))}
   </div>
   <h2>Broker Radar</h2>
   <table>
@@ -97,6 +111,11 @@ def render_dashboard(workspace: str | Path) -> str:
   </table>
   <h2>Local Watchdog</h2>
   {finding_cards or "<p>Run supargus watchdog scan to populate this section.</p>"}
+  <h2>Monitor Changes</h2>
+  <table>
+    <thead><tr><th>Broker</th><th>Change</th><th>Previous</th><th>Current</th><th>Detail</th></tr></thead>
+    <tbody>{change_rows or "<tr><td colspan='5'>Run supargus monitor diff to populate this section.</td></tr>"}</tbody>
+  </table>
 </main></body></html>"""
 
 
@@ -133,4 +152,3 @@ def run_app(workspace: str | Path, host: str = "127.0.0.1", port: int = 8765) ->
     print(f"Supargus dashboard running at http://{host}:{port}")
     print("Press Ctrl+C to stop.")
     server.serve_forever()
-

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import tempfile
 import unittest
@@ -10,6 +11,7 @@ from unittest.mock import patch
 from supargus.app import render_dashboard
 from supargus.broker import build_search_url, score_broker_page, search_brokers
 from supargus.identity import identity_from_dict, sample_identity, save_identity, load_identity
+from supargus.monitor import diff_matches, diff_payload, save_snapshot, latest_snapshot
 from supargus.models import BrokerMatch
 from supargus.registry import load_default_brokers, validate_brokers
 from supargus.takedown import prepare_requests
@@ -138,6 +140,56 @@ class SupargusCoreTests(unittest.TestCase):
             seal_file(plain, vault)
             loaded = load_identity(vault)
         self.assertEqual(loaded.primary_email(), profile.primary_email())
+
+    def test_monitor_diff_detects_reappeared_and_cleared(self) -> None:
+        previous = [
+            BrokerMatch("a", "Broker A", "no_obvious_match", "unknown", 0, "https://a"),
+            BrokerMatch("b", "Broker B", "possible_match", "medium", 50, "https://b"),
+        ]
+        current = [
+            BrokerMatch("a", "Broker A", "possible_match", "high", 80, "https://a"),
+            BrokerMatch("b", "Broker B", "no_obvious_match", "unknown", 0, "https://b"),
+            BrokerMatch("c", "Broker C", "needs_manual_review", "unknown", 0, "https://c"),
+        ]
+        changes = diff_matches(previous, current)
+        types = {change.change_type for change in changes}
+        self.assertEqual(types, {"reappeared", "cleared", "new_match"})
+
+    def test_monitor_snapshot_and_payload(self) -> None:
+        payload = {
+            "matches": [
+                {
+                    "broker_id": "a",
+                    "broker_name": "Broker A",
+                    "status": "no_obvious_match",
+                    "confidence": "unknown",
+                    "score": 0,
+                    "search_url": "https://a",
+                }
+            ]
+        }
+        current = {
+            "matches": [
+                {
+                    "broker_id": "a",
+                    "broker_name": "Broker A",
+                    "status": "possible_match",
+                    "confidence": "high",
+                    "score": 90,
+                    "search_url": "https://a",
+                }
+            ]
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            previous_path = Path(tmp) / "previous.json"
+            current_path = Path(tmp) / "current.json"
+            previous_path.write_text(json.dumps(payload), encoding="utf-8")
+            current_path.write_text(json.dumps(current), encoding="utf-8")
+            snapshot = save_snapshot(previous_path, Path(tmp) / "history")
+            self.assertTrue(snapshot.exists())
+            self.assertEqual(latest_snapshot(Path(tmp) / "history"), Path(tmp) / "history" / "latest.json")
+            diff = diff_payload(previous_path, current_path)
+        self.assertEqual(diff["summary"]["reappeared"], 1)
 
 
 if __name__ == "__main__":
