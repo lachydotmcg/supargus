@@ -1,0 +1,176 @@
+{
+  "brokers": [
+    {
+      "id": "fastpeoplesearch",
+      "name": "FastPeopleSearch",
+      "type": "people_search",
+      "regions": ["US"],
+      "search": {
+        "method": "url",
+        "url": "https://www.fastpeoplesearch.com/name/{name}_{state}",
+        "query_fields": ["name", "state"]
+      },
+      "opt_out": {
+        "url": "https://www.fastpeoplesearch.com/removal",
+        "method": "form",
+        "requires": ["profile_url", "email_verification"],
+        "notes": ["Manual review recommended before submitting."]
+      },
+      "notes": ["People-search site; search paths may change."]
+    },
+    {
+      "id": "truepeoplesearch",
+      "name": "TruePeopleSearch",
+      "type": "people_search",
+      "regions": ["US"],
+      "search": {
+        "method": "url",
+        "url": "https://www.truepeoplesearch.com/results?name={name}&citystatezip={state}",
+        "query_fields": ["name", "state"]
+      },
+      "opt_out": {
+        "url": "https://www.truepeoplesearch.com/removal",
+        "method": "form",
+        "requires": ["profile_url", "email_verification"]
+      },
+      "notes": ["Requires manual verification."]
+    },
+    {
+      "id": "whitepages",
+      "name": "Whitepages",
+      "type": "people_search",
+      "regions": ["US"],
+      "search": {
+        "method": "url",
+        "url": "https://www.whitepages.com/name/{name}/{state}",
+        "query_fields": ["name", "state"]
+      },
+      "opt_out": {
+        "url": "https://www.whitepages.com/suppression_requests",
+        "method": "form",
+        "requires": ["profile_url", "verification"]
+      },
+      "notes": ["May show paywalled or partial results."]
+    },
+    {
+      "id": "spokeo",
+      "name": "Spokeo",
+      "type": "data_broker",
+      "regions": ["US"],
+      "search": {
+        "method": "url",
+        "url": "https://www.spokeo.com/{name}",
+        "query_fields": ["name"]
+      },
+      "opt_out": {
+        "url": "https://www.spokeo.com/optout",
+        "method": "form",
+        "requires": ["profile_url", "email_verification"]
+      },
+      "notes": ["Search and opt-out flows may require manual browser review."]
+    },
+    {
+      "id": "beenverified",
+      "name": "BeenVerified",
+      "type": "data_broker",
+      "regions": ["US"],
+      "search": {
+        "method": "url",
+        "url": "https://www.beenverified.com/people/{first}-{last}/",
+        "query_fields": ["first", "last"]
+      },
+      "opt_out": {
+        "url": "https://www.beenverified.com/app/optout/search",
+        "method": "form",
+        "requires": ["profile_url", "email_verification"]
+      },
+      "notes": ["Often requires manual identity selection."]
+    },
+    {
+      "id": "peoplefinders",
+      "name": "PeopleFinders",
+      "type": "people_search",
+      "regions": ["US"],
+      "search": {
+        "method": "url",
+        "url": "https://www.peoplefinders.com/people/{first}-{last}",
+        "query_fields": ["first", "last"]
+      },
+      "opt_out": {
+        "url": "https://www.peoplefinders.com/opt-out",
+        "method": "form",
+        "requires": ["profile_url", "email_verification"]
+      },
+      "notes": ["Manual result selection likely required."]
+    },
+    {
+      "id": "radaris",
+      "name": "Radaris",
+      "type": "people_search",
+      "regions": ["US"],
+      "search": {
+        "method": "url",
+        "url": "https://radaris.com/p/{first}/{last}/",
+        "query_fields": ["first", "last"]
+      },
+      "opt_out": {
+        "url": "https://radaris.com/control/privacy",
+        "method": "form",
+        "requires": ["profile_url", "account_or_email_verification"]
+      },
+      "notes": ["Manual review recommended."]
+    },
+    {
+      "id": "mylife",
+      "name": "MyLife",
+      "type": "people_search",
+      "regions": ["US"],
+      "search": {
+        "method": "url",
+        "url": "https://www.mylife.com/{first}-{last}/",
+        "query_fields": ["first", "last"]
+      },
+      "opt_out": {
+        "url": "https://www.mylife.com/ccpa/index.pubview",
+        "method": "form",
+        "requires": ["profile_url", "verification"]
+      },
+      "notes": ["May require CCPA/privacy request flow."]
+    },
+    {
+      "id": "usphonebook",
+      "name": "USPhoneBook",
+      "type": "people_search",
+      "regions": ["US"],
+      "search": {
+        "method": "url",
+        "url": "https://www.usphonebook.com/{name}",
+        "query_fields": ["name"]
+      },
+      "opt_out": {
+        "url": "https://www.usphonebook.com/opt-out",
+        "method": "form",
+        "requires": ["profile_url", "email_verification"]
+      },
+      "notes": ["Search paths may change."]
+    },
+    {
+      "id": "thatsthem",
+      "name": "ThatsThem",
+      "type": "people_search",
+      "regions": ["US"],
+      "search": {
+        "method": "url",
+        "url": "https://thatsthem.com/name/{first}-{last}",
+        "query_fields": ["first", "last"]
+      },
+      "opt_out": {
+        "url": "https://thatsthem.com/optout",
+        "method": "form",
+        "requires": ["profile_url", "email_verification"]
+      },
+      "notes": ["Manual review recommended."]
+    }
+  ]
+}
+
