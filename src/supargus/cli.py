@@ -15,6 +15,7 @@ from .models import BrokerMatch, to_dict
 from .registry import load_registry
 from .report import matches_payload, watchdog_payload, write_html_report, write_json
 from .takedown import load_requests, prepare_requests
+from .tracker import due_for_follow_up, format_records, import_requests, load_tracker, update_status
 from .watchdog import run_watchdog
 
 
@@ -123,6 +124,32 @@ def cmd_registry_list(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_track_import(args: argparse.Namespace) -> int:
+    requests = load_requests(args.requests)
+    records = import_requests(
+        requests,
+        args.tracker,
+        status=args.status,
+        follow_up_after_days=args.follow_up_days,
+    )
+    print(f"Tracker now has {len(records)} record(s): {args.tracker}")
+    return 0
+
+
+def cmd_track_list(args: argparse.Namespace) -> int:
+    records = load_tracker(args.tracker)
+    if args.due:
+        records = due_for_follow_up(records)
+    print(format_records(records))
+    return 0
+
+
+def cmd_track_update(args: argparse.Namespace) -> int:
+    records = update_status(args.tracker, args.broker_id, args.status, notes=args.notes)
+    print(f"Updated tracker. {len(records)} record(s) total.")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Supargus local-first privacy watchdog")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -185,6 +212,25 @@ def build_parser() -> argparse.ArgumentParser:
     p_watchdog_scan.add_argument("--output", default="reports/watchdog.json")
     p_watchdog_scan.add_argument("--html")
     p_watchdog_scan.set_defaults(func=cmd_watchdog_scan)
+
+    p_track = sub.add_parser("track", help="track request status and follow-ups")
+    track_sub = p_track.add_subparsers(dest="track_command", required=True)
+    p_track_import = track_sub.add_parser("import", help="import request drafts into the tracker")
+    p_track_import.add_argument("--requests", default="reports/requests/requests.json")
+    p_track_import.add_argument("--tracker", default="reports/tracker.json")
+    p_track_import.add_argument("--status", default="draft")
+    p_track_import.add_argument("--follow-up-days", type=int, default=30)
+    p_track_import.set_defaults(func=cmd_track_import)
+    p_track_list = track_sub.add_parser("list", help="list tracked requests")
+    p_track_list.add_argument("--tracker", default="reports/tracker.json")
+    p_track_list.add_argument("--due", action="store_true", help="show only records due for follow-up")
+    p_track_list.set_defaults(func=cmd_track_list)
+    p_track_update = track_sub.add_parser("update", help="update a broker request status")
+    p_track_update.add_argument("broker_id")
+    p_track_update.add_argument("status")
+    p_track_update.add_argument("--tracker", default="reports/tracker.json")
+    p_track_update.add_argument("--notes", default="")
+    p_track_update.set_defaults(func=cmd_track_update)
 
     p_app = sub.add_parser("app", help="serve the local Supargus dashboard")
     p_app.add_argument("--workspace", default="reports/latest")

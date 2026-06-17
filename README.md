@@ -23,6 +23,8 @@ supargus scan --identity workspace/identity.example.json --output-dir workspace 
 supargus brokers find --identity workspace/identity.example.json
 supargus takedown prepare --identity workspace/identity.example.json --matches workspace/broker_matches.json
 supargus mail preview
+supargus track import --requests workspace/requests/requests.json --tracker workspace/tracker.json
+supargus track list --tracker workspace/tracker.json
 supargus watchdog scan
 supargus app --workspace workspace
 ```
@@ -72,6 +74,15 @@ Preview the request queue:
 
 ```bash
 supargus mail preview --requests workspace/requests/requests.json
+```
+
+Track follow-ups:
+
+```bash
+supargus track import --requests workspace/requests/requests.json --tracker workspace/tracker.json
+supargus track list --tracker workspace/tracker.json
+supargus track update fastpeoplesearch submitted --tracker workspace/tracker.json
+supargus track list --tracker workspace/tracker.json --due
 ```
 
 Open the local dashboard:
@@ -309,10 +320,14 @@ supargus takedown prepare --identity workspace/identity.example.json --matches w
 supargus mail preview --requests workspace/requests/requests.json
 supargus mail send --requests workspace/requests/requests.json --yes
 
-# 6. Re-check later by running the same scan again
+# 6. Track follow-ups
+supargus track import --requests workspace/requests/requests.json --tracker workspace/tracker.json
+supargus track list --tracker workspace/tracker.json --due
+
+# 7. Re-check later by running the same scan again
 supargus scan --identity workspace/identity.example.json --output-dir workspace --watchdog
 
-# 7. Scan your own machine
+# 8. Scan your own machine
 supargus watchdog scan
 ```
 
@@ -339,6 +354,7 @@ Supargus will not:
 - [x] HTML/JSON reports
 - [x] request template generator
 - [x] SMTP preview/send support
+- [x] compliance tracker
 - [x] Windows-first watchdog scan
 - [ ] encrypted vault
 - [ ] 20+ high-signal broker detectors

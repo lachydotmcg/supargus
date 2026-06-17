@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import tempfile
 import unittest
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import patch
 
@@ -12,6 +13,7 @@ from supargus.identity import identity_from_dict, sample_identity, save_identity
 from supargus.models import BrokerMatch
 from supargus.registry import load_default_brokers
 from supargus.takedown import prepare_requests
+from supargus.tracker import due_for_follow_up, import_requests, load_tracker, update_status
 from supargus.watchdog import check_env_proxies
 
 
@@ -84,6 +86,30 @@ class SupargusCoreTests(unittest.TestCase):
             html = render_dashboard(tmp)
         self.assertIn("Supargus", html)
         self.assertIn("Run supargus brokers find", html)
+
+    def test_tracker_import_update_and_due(self) -> None:
+        profile = sample_identity()
+        brokers = load_default_brokers()[:1]
+        match = BrokerMatch(
+            broker_id=brokers[0].id,
+            broker_name=brokers[0].name,
+            status="needs_manual_review",
+            confidence="unknown",
+            score=0,
+            search_url="https://example.com/search",
+            evidence_url="https://example.com/profile/jane",
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            requests, _ = prepare_requests([match], brokers, profile, Path(tmp) / "requests")
+            tracker = Path(tmp) / "tracker.json"
+            records = import_requests(requests, tracker, status="sent", follow_up_after_days=1)
+            self.assertEqual(len(records), 1)
+            update_status(tracker, brokers[0].id, "waiting", notes="confirmation pending")
+            loaded = load_tracker(tracker)
+            self.assertEqual(loaded[0].status, "waiting")
+            loaded[0].updated_at = (datetime.now(timezone.utc) - timedelta(days=2)).isoformat(timespec="seconds")
+            due = due_for_follow_up(loaded)
+            self.assertEqual(len(due), 1)
 
 
 if __name__ == "__main__":
