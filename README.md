@@ -30,6 +30,9 @@ supargus vault seal workspace/identity.example.json workspace/identity.sgvault
 supargus brokers validate
 supargus monitor scan --identity workspace/identity.sgvault --output-dir workspace --history-dir workspace/history
 supargus export bundle --workspace workspace --output workspace/supargus_evidence_bundle.zip
+supargus config init
+supargus workflow run --config supargus.config.json
+supargus schedule print --config supargus.config.json --time 09:00
 supargus watchdog scan
 supargus app --workspace workspace
 ```
@@ -131,6 +134,23 @@ supargus export bundle --workspace workspace --output workspace/supargus_evidenc
 
 The bundle includes a `manifest.json` with file sizes and SHA-256 hashes for the included artifacts.
 
+Run the whole local workflow from config:
+
+```bash
+supargus config init
+supargus workflow run --config supargus.config.json
+```
+
+The workflow config controls identity path, workspace, history, tracker, request directories, broker limit, watchdog scans, follow-up generation, and bundle export.
+
+Print scheduling commands:
+
+```bash
+supargus schedule print --config supargus.config.json --time 09:00
+```
+
+This prints Windows Task Scheduler and cron examples. Supargus does not install a scheduled task without you copying/running the command yourself.
+
 ## Why This Exists
 
 Data brokers, people-search sites, enrichment providers, lead databases, breach mirrors, scraper networks, and residential proxy ecosystems all profit from ordinary people being easy to find, classify, contact, route through, or sell to.
@@ -167,6 +187,7 @@ Supargus helps you separate those cases and keep pressure on them with a paper t
 | Compliance Tracker | Tracks sent requests, confirmations, denials, silence, reminders, and reappearance. |
 | Monitor | Diffs recurring scans to show new matches, reappearances, clears, and status changes. |
 | Evidence Bundle | Exports reports, tracker state, request drafts, follow-ups, and hashes into a portable zip. |
+| Workflow Runner | Runs the local scan, diff, watchdog, drafts, tracker, follow-ups, and bundle export from one config file. |
 | Local Watchdog | Scans your machine for proxy SDKs, suspicious network settings, browser extensions, startup entries, local listeners, and risky certificates. |
 | Report Builder | Produces local HTML, JSON, and evidence bundles. |
 
@@ -382,6 +403,11 @@ supargus watchdog scan
 
 # 9. Export receipts
 supargus export bundle --workspace workspace --output workspace/supargus_evidence_bundle.zip
+
+# 10. Or automate the local loop from config
+supargus config init
+supargus workflow run --config supargus.config.json
+supargus schedule print --config supargus.config.json --time 09:00
 ```
 
 ## What Supargus Will Not Do
@@ -413,6 +439,8 @@ Supargus will not:
 - [x] follow-up draft generation
 - [x] recurring scan snapshots and reappearance diffs
 - [x] zipped evidence bundle export
+- [x] one-command workflow runner
+- [x] local schedule command generation
 - [x] Windows-first watchdog scan
 - [ ] 20+ high-signal broker detectors
 

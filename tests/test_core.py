@@ -12,14 +12,17 @@ from unittest.mock import patch
 from supargus.app import render_dashboard
 from supargus.broker import build_search_url, score_broker_page, search_brokers
 from supargus.bundle import export_bundle
+from supargus.config import WorkflowConfig, load_config, save_default_config
 from supargus.identity import identity_from_dict, sample_identity, save_identity, load_identity
 from supargus.monitor import diff_matches, diff_payload, save_snapshot, latest_snapshot
 from supargus.models import BrokerMatch
 from supargus.registry import load_default_brokers, validate_brokers
+from supargus.schedule import cron_line, schedule_instructions, schtasks_create_command
 from supargus.takedown import prepare_requests
 from supargus.tracker import due_for_follow_up, import_requests, load_tracker, prepare_followups, update_status
 from supargus.vault import open_file, seal_file, vault_available
 from supargus.watchdog import check_env_proxies
+from supargus.workflow import run_workflow
 
 
 class SupargusCoreTests(unittest.TestCase):
@@ -232,6 +235,46 @@ class SupargusCoreTests(unittest.TestCase):
         self.assertIn("broker_matches.json", names)
         self.assertIn("requests/demo.txt", names)
         self.assertIn("followups/demo_followup.txt", names)
+
+    def test_config_roundtrip(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "supargus.config.json"
+            save_default_config(path)
+            config = load_config(path)
+        self.assertEqual(config.workspace, "workspace")
+        self.assertTrue(config.watchdog)
+
+    def test_schedule_commands_include_workflow(self) -> None:
+        win = schtasks_create_command("supargus.config.json", time="08:30")
+        cron = cron_line("supargus.config.json", hour=8, minute=30)
+        instructions = schedule_instructions("supargus.config.json", time="08:30")
+        self.assertIn("workflow", win)
+        self.assertIn("/ST 08:30", win)
+        self.assertTrue(cron.startswith("30 8 * * *"))
+        self.assertIn("Windows Task Scheduler", instructions)
+
+    def test_workflow_run_writes_expected_outputs(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            identity = root / "identity.json"
+            save_identity(sample_identity(), identity)
+            config = WorkflowConfig(
+                identity=str(identity),
+                workspace=str(root / "workspace"),
+                history_dir=str(root / "history"),
+                tracker=str(root / "workspace" / "tracker.json"),
+                requests_dir=str(root / "workspace" / "requests"),
+                followups_dir=str(root / "workspace" / "followups"),
+                bundle_path=str(root / "workspace" / "bundle.zip"),
+                limit=2,
+                watchdog=False,
+            )
+            outputs = run_workflow(config)
+            workspace = root / "workspace"
+            self.assertTrue((workspace / "broker_matches.json").exists())
+            self.assertTrue((workspace / "requests" / "requests.json").exists())
+            self.assertTrue((workspace / "bundle.zip").exists())
+            self.assertEqual(outputs["request_count"], 2)
 
 
 if __name__ == "__main__":

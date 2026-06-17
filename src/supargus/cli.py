@@ -10,6 +10,7 @@ from pathlib import Path
 from .broker import search_brokers
 from .app import run_app
 from .bundle import export_bundle
+from .config import DEFAULT_CONFIG_NAME, load_config, save_default_config
 from .identity import load_identity, sample_identity, save_identity
 from .mailer import load_smtp_config, preview_requests, send_requests
 from .models import BrokerMatch, to_dict
@@ -20,6 +21,8 @@ from .takedown import load_requests, prepare_requests
 from .tracker import due_for_follow_up, format_records, import_requests, load_tracker, prepare_followups, update_status
 from .vault import open_file, seal_file, secure_delete_plaintext, vault_available
 from .watchdog import run_watchdog
+from .schedule import schedule_instructions
+from .workflow import run_workflow
 
 
 def _load_matches(path: str | Path) -> list[BrokerMatch]:
@@ -235,6 +238,26 @@ def cmd_export_bundle(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_config_init(args: argparse.Namespace) -> int:
+    out = save_default_config(args.path, force=args.force)
+    print(f"Wrote Supargus config: {out}")
+    return 0
+
+
+def cmd_workflow_run(args: argparse.Namespace) -> int:
+    config = load_config(args.config)
+    outputs = run_workflow(config, registry_paths=args.registry)
+    print("Workflow complete.")
+    for key, value in outputs.items():
+        print(f"{key}: {value}")
+    return 0
+
+
+def cmd_schedule_print(args: argparse.Namespace) -> int:
+    print(schedule_instructions(args.config, time=args.time))
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Supargus local-first privacy watchdog")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -370,6 +393,27 @@ def build_parser() -> argparse.ArgumentParser:
     p_export_bundle.add_argument("--workspace", default="reports/latest")
     p_export_bundle.add_argument("--output", default="reports/supargus_evidence_bundle.zip")
     p_export_bundle.set_defaults(func=cmd_export_bundle)
+
+    p_config = sub.add_parser("config", help="manage local Supargus workflow config")
+    config_sub = p_config.add_subparsers(dest="config_command", required=True)
+    p_config_init = config_sub.add_parser("init", help="write a sample workflow config")
+    p_config_init.add_argument("path", nargs="?", default=DEFAULT_CONFIG_NAME)
+    p_config_init.add_argument("--force", action="store_true")
+    p_config_init.set_defaults(func=cmd_config_init)
+
+    p_workflow = sub.add_parser("workflow", help="run the local recurring Supargus workflow")
+    workflow_sub = p_workflow.add_subparsers(dest="workflow_command", required=True)
+    p_workflow_run = workflow_sub.add_parser("run", help="run broker scan, monitor diff, watchdog, drafts, tracker, followups, and bundle")
+    p_workflow_run.add_argument("--config", default=DEFAULT_CONFIG_NAME)
+    p_workflow_run.add_argument("--registry", action="append")
+    p_workflow_run.set_defaults(func=cmd_workflow_run)
+
+    p_schedule = sub.add_parser("schedule", help="print local scheduling commands")
+    schedule_sub = p_schedule.add_subparsers(dest="schedule_command", required=True)
+    p_schedule_print = schedule_sub.add_parser("print", help="print Windows Task Scheduler and cron commands")
+    p_schedule_print.add_argument("--config", default=DEFAULT_CONFIG_NAME)
+    p_schedule_print.add_argument("--time", default="09:00")
+    p_schedule_print.set_defaults(func=cmd_schedule_print)
 
     p_app = sub.add_parser("app", help="serve the local Supargus dashboard")
     p_app.add_argument("--workspace", default="reports/latest")
