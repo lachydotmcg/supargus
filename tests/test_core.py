@@ -11,9 +11,10 @@ from supargus.app import render_dashboard
 from supargus.broker import build_search_url, score_broker_page, search_brokers
 from supargus.identity import identity_from_dict, sample_identity, save_identity, load_identity
 from supargus.models import BrokerMatch
-from supargus.registry import load_default_brokers
+from supargus.registry import load_default_brokers, validate_brokers
 from supargus.takedown import prepare_requests
 from supargus.tracker import due_for_follow_up, import_requests, load_tracker, update_status
+from supargus.vault import open_file, seal_file, vault_available
 from supargus.watchdog import check_env_proxies
 
 
@@ -31,6 +32,9 @@ class SupargusCoreTests(unittest.TestCase):
         brokers = load_default_brokers()
         self.assertGreaterEqual(len(brokers), 10)
         self.assertTrue(any(broker.id == "fastpeoplesearch" for broker in brokers))
+
+    def test_default_registry_validates(self) -> None:
+        self.assertEqual(validate_brokers(load_default_brokers()), [])
 
     def test_build_search_url_encodes_identity(self) -> None:
         profile = sample_identity()
@@ -110,6 +114,30 @@ class SupargusCoreTests(unittest.TestCase):
             loaded[0].updated_at = (datetime.now(timezone.utc) - timedelta(days=2)).isoformat(timespec="seconds")
             due = due_for_follow_up(loaded)
             self.assertEqual(len(due), 1)
+
+    @unittest.skipUnless(vault_available(), "requires Windows DPAPI")
+    def test_vault_roundtrip_file(self) -> None:
+        profile = sample_identity()
+        with tempfile.TemporaryDirectory() as tmp:
+            plain = Path(tmp) / "identity.json"
+            vault = Path(tmp) / "identity.sgvault"
+            opened = Path(tmp) / "opened.json"
+            save_identity(profile, plain)
+            seal_file(plain, vault)
+            open_file(vault, opened)
+            loaded = load_identity(opened)
+        self.assertEqual(loaded.full_name, profile.full_name)
+
+    @unittest.skipUnless(vault_available(), "requires Windows DPAPI")
+    def test_load_identity_from_vault(self) -> None:
+        profile = sample_identity()
+        with tempfile.TemporaryDirectory() as tmp:
+            plain = Path(tmp) / "identity.json"
+            vault = Path(tmp) / "identity.sgvault"
+            save_identity(profile, plain)
+            seal_file(plain, vault)
+            loaded = load_identity(vault)
+        self.assertEqual(loaded.primary_email(), profile.primary_email())
 
 
 if __name__ == "__main__":

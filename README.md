@@ -25,6 +25,8 @@ supargus takedown prepare --identity workspace/identity.example.json --matches w
 supargus mail preview
 supargus track import --requests workspace/requests/requests.json --tracker workspace/tracker.json
 supargus track list --tracker workspace/tracker.json
+supargus vault seal workspace/identity.example.json workspace/identity.sgvault
+supargus brokers validate
 supargus watchdog scan
 supargus app --workspace workspace
 ```
@@ -60,6 +62,16 @@ Edit that file with your real details, then run a local scan:
 ```bash
 supargus scan --identity workspace/identity.example.json --output-dir workspace --watchdog --limit 10
 ```
+
+On Windows, seal the identity file with current-user DPAPI encryption and use the encrypted vault directly:
+
+```powershell
+supargus vault status
+supargus vault seal workspace\identity.example.json workspace\identity.sgvault --delete-plaintext
+supargus scan --identity workspace\identity.sgvault --output-dir workspace --watchdog --limit 10
+```
+
+`--delete-plaintext` performs a best-effort overwrite and remove of the source file after sealing. Keep backups carefully; a DPAPI vault is tied to the Windows user account that created it.
 
 Prepare takedown drafts:
 
@@ -180,6 +192,13 @@ Every broker entry can define:
 - what jurisdictional language applies
 - how long to wait before follow-up
 - whether manual review is required
+
+Validate registry entries before committing new broker adapters:
+
+```bash
+supargus brokers validate
+supargus brokers validate --registry path/to/custom_brokers.json
+```
 
 ## Takedown Studio
 
@@ -348,7 +367,9 @@ Supargus will not:
 ### Phase 1: CLI MVP
 
 - [x] local identity profile
+- [x] Windows DPAPI encrypted identity vault
 - [x] broker registry format
+- [x] broker registry validation
 - [x] 10 starter broker detectors
 - [x] evidence capture
 - [x] HTML/JSON reports
@@ -356,7 +377,6 @@ Supargus will not:
 - [x] SMTP preview/send support
 - [x] compliance tracker
 - [x] Windows-first watchdog scan
-- [ ] encrypted vault
 - [ ] 20+ high-signal broker detectors
 
 ### Phase 2: Local App

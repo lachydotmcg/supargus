@@ -12,10 +12,11 @@ from .app import run_app
 from .identity import load_identity, sample_identity, save_identity
 from .mailer import load_smtp_config, preview_requests, send_requests
 from .models import BrokerMatch, to_dict
-from .registry import load_registry
+from .registry import load_registry, validate_registry
 from .report import matches_payload, watchdog_payload, write_html_report, write_json
 from .takedown import load_requests, prepare_requests
 from .tracker import due_for_follow_up, format_records, import_requests, load_tracker, update_status
+from .vault import open_file, seal_file, secure_delete_plaintext, vault_available
 from .watchdog import run_watchdog
 
 
@@ -124,6 +125,16 @@ def cmd_registry_list(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_registry_validate(args: argparse.Namespace) -> int:
+    errors = validate_registry(args.registry)
+    if errors:
+        for error in errors:
+            print(f"ERROR {error}")
+        return 1
+    print("Registry OK")
+    return 0
+
+
 def cmd_track_import(args: argparse.Namespace) -> int:
     requests = load_requests(args.requests)
     records = import_requests(
@@ -147,6 +158,30 @@ def cmd_track_list(args: argparse.Namespace) -> int:
 def cmd_track_update(args: argparse.Namespace) -> int:
     records = update_status(args.tracker, args.broker_id, args.status, notes=args.notes)
     print(f"Updated tracker. {len(records)} record(s) total.")
+    return 0
+
+
+def cmd_vault_status(args: argparse.Namespace) -> int:
+    if vault_available():
+        print("Vault backend available: Windows DPAPI current-user encryption")
+        return 0
+    print("No secure vault backend is available on this platform yet.")
+    return 1
+
+
+def cmd_vault_seal(args: argparse.Namespace) -> int:
+    out = seal_file(args.input, args.output, force=args.force, label=args.label)
+    if args.delete_plaintext:
+        secure_delete_plaintext(args.input)
+        print(f"Sealed {args.input} -> {out} and removed plaintext input.")
+    else:
+        print(f"Sealed {args.input} -> {out}")
+    return 0
+
+
+def cmd_vault_open(args: argparse.Namespace) -> int:
+    out = open_file(args.input, args.output, force=args.force)
+    print(f"Opened {args.input} -> {out}")
     return 0
 
 
@@ -183,6 +218,9 @@ def build_parser() -> argparse.ArgumentParser:
     p_brokers_list = broker_sub.add_parser("list", help="list configured brokers")
     p_brokers_list.add_argument("--registry", action="append")
     p_brokers_list.set_defaults(func=cmd_registry_list)
+    p_brokers_validate = broker_sub.add_parser("validate", help="validate broker registry entries")
+    p_brokers_validate.add_argument("--registry", action="append")
+    p_brokers_validate.set_defaults(func=cmd_registry_validate)
 
     p_takedown = sub.add_parser("takedown", help="takedown workflow commands")
     takedown_sub = p_takedown.add_subparsers(dest="takedown_command", required=True)
@@ -231,6 +269,23 @@ def build_parser() -> argparse.ArgumentParser:
     p_track_update.add_argument("--tracker", default="reports/tracker.json")
     p_track_update.add_argument("--notes", default="")
     p_track_update.set_defaults(func=cmd_track_update)
+
+    p_vault = sub.add_parser("vault", help="encrypt or open local identity vaults")
+    vault_sub = p_vault.add_subparsers(dest="vault_command", required=True)
+    p_vault_status = vault_sub.add_parser("status", help="show available local vault backend")
+    p_vault_status.set_defaults(func=cmd_vault_status)
+    p_vault_seal = vault_sub.add_parser("seal", help="encrypt a plaintext identity file")
+    p_vault_seal.add_argument("input")
+    p_vault_seal.add_argument("output")
+    p_vault_seal.add_argument("--force", action="store_true")
+    p_vault_seal.add_argument("--label", default="identity")
+    p_vault_seal.add_argument("--delete-plaintext", action="store_true")
+    p_vault_seal.set_defaults(func=cmd_vault_seal)
+    p_vault_open = vault_sub.add_parser("open", help="decrypt a vault file to a plaintext file")
+    p_vault_open.add_argument("input")
+    p_vault_open.add_argument("output")
+    p_vault_open.add_argument("--force", action="store_true")
+    p_vault_open.set_defaults(func=cmd_vault_open)
 
     p_app = sub.add_parser("app", help="serve the local Supargus dashboard")
     p_app.add_argument("--workspace", default="reports/latest")

@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from .models import Address, IdentityProfile, to_dict
+from .vault import load_vault_identity_text
 
 
 def sample_identity() -> IdentityProfile:
@@ -57,7 +58,10 @@ def identity_from_dict(data: dict[str, Any]) -> IdentityProfile:
 
 def load_identity(path: str | Path) -> IdentityProfile:
     p = Path(path)
-    raw = p.read_text(encoding="utf-8")
+    if p.suffix.lower() in {".sgvault", ".vault"}:
+        raw = load_vault_identity_text(p)
+    else:
+        raw = p.read_text(encoding="utf-8")
     if p.suffix.lower() in {".yaml", ".yml"}:
         try:
             import yaml  # type: ignore
@@ -80,4 +84,3 @@ def save_identity(profile: IdentityProfile, path: str | Path, *, force: bool = F
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(json.dumps(to_dict(profile), indent=2), encoding="utf-8")
     return p
-
