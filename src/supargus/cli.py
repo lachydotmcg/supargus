@@ -9,6 +9,7 @@ from pathlib import Path
 
 from .broker import search_brokers
 from .app import run_app
+from .bundle import export_bundle
 from .identity import load_identity, sample_identity, save_identity
 from .mailer import load_smtp_config, preview_requests, send_requests
 from .models import BrokerMatch, to_dict
@@ -16,7 +17,7 @@ from .monitor import diff_payload, latest_snapshot, save_snapshot, write_diff
 from .registry import load_registry, validate_registry
 from .report import matches_payload, watchdog_payload, write_html_report, write_json
 from .takedown import load_requests, prepare_requests
-from .tracker import due_for_follow_up, format_records, import_requests, load_tracker, update_status
+from .tracker import due_for_follow_up, format_records, import_requests, load_tracker, prepare_followups, update_status
 from .vault import open_file, seal_file, secure_delete_plaintext, vault_available
 from .watchdog import run_watchdog
 
@@ -162,6 +163,13 @@ def cmd_track_update(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_track_followup(args: argparse.Namespace) -> int:
+    records = load_tracker(args.tracker)
+    requests, manifest = prepare_followups(records, args.output_dir, due_only=not args.all)
+    print(f"Prepared {len(requests)} follow-up draft(s). Manifest: {manifest}")
+    return 0
+
+
 def cmd_vault_status(args: argparse.Namespace) -> int:
     if vault_available():
         print("Vault backend available: Windows DPAPI current-user encryption")
@@ -218,6 +226,12 @@ def cmd_monitor_scan(args: argparse.Namespace) -> int:
         write_diff(previous, current_path, output_dir / "monitor_diff.json")
     snapshot = save_snapshot(current_path, args.history_dir)
     print(f"Wrote monitor scan to {output_dir}; snapshot: {snapshot}")
+    return 0
+
+
+def cmd_export_bundle(args: argparse.Namespace) -> int:
+    out, manifest = export_bundle(args.workspace, args.output)
+    print(f"Exported evidence bundle: {out} ({manifest['file_count']} file(s))")
     return 0
 
 
@@ -305,6 +319,11 @@ def build_parser() -> argparse.ArgumentParser:
     p_track_update.add_argument("--tracker", default="reports/tracker.json")
     p_track_update.add_argument("--notes", default="")
     p_track_update.set_defaults(func=cmd_track_update)
+    p_track_followup = track_sub.add_parser("followup", help="generate follow-up drafts from tracked requests")
+    p_track_followup.add_argument("--tracker", default="reports/tracker.json")
+    p_track_followup.add_argument("--output-dir", default="reports/followups")
+    p_track_followup.add_argument("--all", action="store_true", help="generate follow-ups for all records, not only due records")
+    p_track_followup.set_defaults(func=cmd_track_followup)
 
     p_vault = sub.add_parser("vault", help="encrypt or open local identity vaults")
     vault_sub = p_vault.add_subparsers(dest="vault_command", required=True)
@@ -344,6 +363,13 @@ def build_parser() -> argparse.ArgumentParser:
     p_monitor_scan.add_argument("--limit", type=int)
     p_monitor_scan.add_argument("--timeout", type=float, default=12.0)
     p_monitor_scan.set_defaults(func=cmd_monitor_scan)
+
+    p_export = sub.add_parser("export", help="export evidence and workflow artifacts")
+    export_sub = p_export.add_subparsers(dest="export_command", required=True)
+    p_export_bundle = export_sub.add_parser("bundle", help="write a zipped evidence bundle")
+    p_export_bundle.add_argument("--workspace", default="reports/latest")
+    p_export_bundle.add_argument("--output", default="reports/supargus_evidence_bundle.zip")
+    p_export_bundle.set_defaults(func=cmd_export_bundle)
 
     p_app = sub.add_parser("app", help="serve the local Supargus dashboard")
     p_app.add_argument("--workspace", default="reports/latest")

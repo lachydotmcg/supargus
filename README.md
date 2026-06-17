@@ -25,9 +25,11 @@ supargus takedown prepare --identity workspace/identity.example.json --matches w
 supargus mail preview
 supargus track import --requests workspace/requests/requests.json --tracker workspace/tracker.json
 supargus track list --tracker workspace/tracker.json
+supargus track followup --tracker workspace/tracker.json --output-dir workspace/followups
 supargus vault seal workspace/identity.example.json workspace/identity.sgvault
 supargus brokers validate
 supargus monitor scan --identity workspace/identity.sgvault --output-dir workspace --history-dir workspace/history
+supargus export bundle --workspace workspace --output workspace/supargus_evidence_bundle.zip
 supargus watchdog scan
 supargus app --workspace workspace
 ```
@@ -96,6 +98,13 @@ supargus track import --requests workspace/requests/requests.json --tracker work
 supargus track list --tracker workspace/tracker.json
 supargus track update fastpeoplesearch submitted --tracker workspace/tracker.json
 supargus track list --tracker workspace/tracker.json --due
+supargus track followup --tracker workspace/tracker.json --output-dir workspace/followups
+```
+
+Preview follow-up drafts the same way as first requests:
+
+```bash
+supargus mail preview --requests workspace/followups/requests.json
 ```
 
 Track reappearances between scans:
@@ -113,6 +122,14 @@ Open the local dashboard:
 ```bash
 supargus app --workspace workspace
 ```
+
+Export an evidence bundle:
+
+```bash
+supargus export bundle --workspace workspace --output workspace/supargus_evidence_bundle.zip
+```
+
+The bundle includes a `manifest.json` with file sizes and SHA-256 hashes for the included artifacts.
 
 ## Why This Exists
 
@@ -149,6 +166,7 @@ Supargus helps you separate those cases and keep pressure on them with a paper t
 | Mail Runner | Sends reviewed requests through SMTP, Gmail, or another local email account you control. |
 | Compliance Tracker | Tracks sent requests, confirmations, denials, silence, reminders, and reappearance. |
 | Monitor | Diffs recurring scans to show new matches, reappearances, clears, and status changes. |
+| Evidence Bundle | Exports reports, tracker state, request drafts, follow-ups, and hashes into a portable zip. |
 | Local Watchdog | Scans your machine for proxy SDKs, suspicious network settings, browser extensions, startup entries, local listeners, and risky certificates. |
 | Report Builder | Produces local HTML, JSON, and evidence bundles. |
 
@@ -354,12 +372,16 @@ supargus mail send --requests workspace/requests/requests.json --yes
 # 6. Track follow-ups
 supargus track import --requests workspace/requests/requests.json --tracker workspace/tracker.json
 supargus track list --tracker workspace/tracker.json --due
+supargus track followup --tracker workspace/tracker.json --output-dir workspace/followups
 
 # 7. Re-check later by running the same scan again
 supargus monitor scan --identity workspace/identity.sgvault --output-dir workspace --history-dir workspace/history --limit 10
 
 # 8. Scan your own machine
 supargus watchdog scan
+
+# 9. Export receipts
+supargus export bundle --workspace workspace --output workspace/supargus_evidence_bundle.zip
 ```
 
 ## What Supargus Will Not Do
@@ -388,7 +410,9 @@ Supargus will not:
 - [x] request template generator
 - [x] SMTP preview/send support
 - [x] compliance tracker
+- [x] follow-up draft generation
 - [x] recurring scan snapshots and reappearance diffs
+- [x] zipped evidence bundle export
 - [x] Windows-first watchdog scan
 - [ ] 20+ high-signal broker detectors
 

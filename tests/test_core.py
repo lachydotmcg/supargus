@@ -4,18 +4,20 @@ import json
 import os
 import tempfile
 import unittest
+import zipfile
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import patch
 
 from supargus.app import render_dashboard
 from supargus.broker import build_search_url, score_broker_page, search_brokers
+from supargus.bundle import export_bundle
 from supargus.identity import identity_from_dict, sample_identity, save_identity, load_identity
 from supargus.monitor import diff_matches, diff_payload, save_snapshot, latest_snapshot
 from supargus.models import BrokerMatch
 from supargus.registry import load_default_brokers, validate_brokers
 from supargus.takedown import prepare_requests
-from supargus.tracker import due_for_follow_up, import_requests, load_tracker, update_status
+from supargus.tracker import due_for_follow_up, import_requests, load_tracker, prepare_followups, update_status
 from supargus.vault import open_file, seal_file, vault_available
 from supargus.watchdog import check_env_proxies
 
@@ -117,6 +119,28 @@ class SupargusCoreTests(unittest.TestCase):
             due = due_for_follow_up(loaded)
             self.assertEqual(len(due), 1)
 
+    def test_prepare_followups_writes_manifest(self) -> None:
+        profile = sample_identity()
+        brokers = load_default_brokers()[:1]
+        match = BrokerMatch(
+            broker_id=brokers[0].id,
+            broker_name=brokers[0].name,
+            status="needs_manual_review",
+            confidence="unknown",
+            score=0,
+            search_url="https://example.com/search",
+            evidence_url="https://example.com/profile/jane",
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            requests, _ = prepare_requests([match], brokers, profile, Path(tmp) / "requests")
+            tracker = Path(tmp) / "tracker.json"
+            records = import_requests(requests, tracker, status="waiting", follow_up_after_days=1)
+            records[0].updated_at = (datetime.now(timezone.utc) - timedelta(days=2)).isoformat(timespec="seconds")
+            followups, manifest = prepare_followups(records, Path(tmp) / "followups")
+            self.assertEqual(len(followups), 1)
+            self.assertTrue(manifest.exists())
+            self.assertIn("Follow-up", followups[0].subject)
+
     @unittest.skipUnless(vault_available(), "requires Windows DPAPI")
     def test_vault_roundtrip_file(self) -> None:
         profile = sample_identity()
@@ -190,6 +214,24 @@ class SupargusCoreTests(unittest.TestCase):
             self.assertEqual(latest_snapshot(Path(tmp) / "history"), Path(tmp) / "history" / "latest.json")
             diff = diff_payload(previous_path, current_path)
         self.assertEqual(diff["summary"]["reappeared"], 1)
+
+    def test_export_bundle_includes_manifest_and_hashes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "requests").mkdir()
+            (root / "followups").mkdir()
+            (root / "broker_matches.json").write_text('{"matches":[]}', encoding="utf-8")
+            (root / "requests" / "demo.txt").write_text("hello", encoding="utf-8")
+            (root / "followups" / "demo_followup.txt").write_text("checking in", encoding="utf-8")
+            bundle_path, manifest = export_bundle(root, root / "bundle.zip")
+            self.assertEqual(manifest["file_count"], 3)
+            self.assertTrue(all(item["sha256"] for item in manifest["files"]))
+            with zipfile.ZipFile(bundle_path) as zf:
+                names = set(zf.namelist())
+        self.assertIn("manifest.json", names)
+        self.assertIn("broker_matches.json", names)
+        self.assertIn("requests/demo.txt", names)
+        self.assertIn("followups/demo_followup.txt", names)
 
 
 if __name__ == "__main__":

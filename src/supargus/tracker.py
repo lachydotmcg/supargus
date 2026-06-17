@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from .models import TakedownRequest, utc_now
+from .models import TakedownRequest, to_dict, utc_now
 
 
 DEFAULT_FOLLOW_UP_DAYS = 30
@@ -156,3 +157,67 @@ def format_records(records: list[TrackerRecord]) -> str:
         lines.append(f"{record.broker_id}\t{record.status}\t{record.broker_name}\t{destination}")
     return "\n".join(lines)
 
+
+def _safe_slug(value: str) -> str:
+    return re.sub(r"[^a-zA-Z0-9_.-]+", "_", value).strip("_").lower()[:80] or "followup"
+
+
+def build_followup_request(record: TrackerRecord) -> TakedownRequest:
+    destination = record.to_email
+    contact_line = (
+        f"I previously submitted this request through your opt-out form: {record.opt_out_url}"
+        if not destination and record.opt_out_url
+        else "I previously submitted a privacy request."
+    )
+    profile = f"\nProfile or search URL:\n{record.profile_url}\n" if record.profile_url else ""
+    notes = f"\nPrior notes/status:\n{record.notes}\n" if record.notes else ""
+    subject = f"Follow-up: privacy request for {record.broker_name}"
+    body = f"""Hello {record.broker_name} privacy team,
+
+I am following up on my previous privacy request.
+
+{contact_line}
+
+Original request status in my records: {record.status}
+Original request created: {record.created_at}
+Last updated: {record.updated_at}
+{profile}{notes}
+Please confirm whether my personal information has been removed and is no longer sold, shared, published, or made available through your service.
+
+If additional verification is required, please explain the minimum information required and why it is necessary.
+
+Thank you.
+"""
+    return TakedownRequest(
+        broker_id=record.broker_id,
+        broker_name=record.broker_name,
+        request_type="follow_up",
+        to_email=destination,
+        subject=subject,
+        body=body.strip() + "\n",
+        profile_url=record.profile_url,
+        opt_out_url=record.opt_out_url,
+        delivery="email" if destination else "manual_form",
+    )
+
+
+def prepare_followups(
+    records: list[TrackerRecord],
+    output_dir: str | Path,
+    *,
+    due_only: bool = True,
+) -> tuple[list[TakedownRequest], Path]:
+    selected = due_for_follow_up(records) if due_only else records
+    out = Path(output_dir)
+    out.mkdir(parents=True, exist_ok=True)
+    requests: list[TakedownRequest] = []
+    for record in selected:
+        request = build_followup_request(record)
+        filename = out / f"{_safe_slug(request.broker_id)}_followup.txt"
+        filename.write_text(request.body, encoding="utf-8")
+        request.file_path = str(filename)
+        requests.append(request)
+
+    manifest = out / "requests.json"
+    manifest.write_text(json.dumps([to_dict(request) for request in requests], indent=2), encoding="utf-8")
+    return requests, manifest
