@@ -7,10 +7,12 @@ import os
 import queue
 import sys
 import threading
+import webbrowser
 from pathlib import Path
 from typing import Any
 
 from .app import build_state, run_action
+from .forms import FormTask, load_form_queue, update_form_status
 from .identity import sample_identity, save_identity
 
 try:  # Keep imports optional so headless test environments can still import the package.
@@ -63,6 +65,7 @@ class SupargusDesktop:
         self.root = root
         self.queue: "queue.Queue[tuple[str, Any]]" = queue.Queue()
         self.buttons: list["tk.Widget"] = []
+        self.form_tasks: list[FormTask] = []
 
         workspace_path = Path(workspace)
         self.workspace_var = tk.StringVar(value=str(workspace_path))
@@ -236,7 +239,7 @@ class SupargusDesktop:
         self.watchdog_text = self._text_panel(self.watchdog_tab)
         self.change_tree = self._tree(self.changes_tab, ("broker", "change", "previous", "current", "detail"))
         self.tracker_tree = self._tree(self.tracker_tab, ("broker", "status", "delivery", "updated"))
-        self.forms_text = self._text_panel(self.forms_tab)
+        self._build_forms_tab()
         self.log_text = self._text_panel(self.log_tab)
         self._log("Supargus desktop is ready.")
 
@@ -269,6 +272,43 @@ class SupargusDesktop:
             button = ttk.Button(card, text="Run", style="Primary.TButton", command=lambda value=action: self.run_action(value))
             button.grid(row=2, column=0, sticky="w")
             self.buttons.append(button)
+
+    def _build_forms_tab(self) -> None:
+        self.forms_tab.columnconfigure(0, weight=1)
+        self.forms_tab.columnconfigure(1, weight=1)
+        self.forms_tab.rowconfigure(1, weight=1)
+
+        controls = ttk.Frame(self.forms_tab)
+        controls.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 12))
+        ttk.Button(controls, text="Open Form", style="Primary.TButton", command=self._open_selected_form).pack(side="left")
+        ttk.Button(controls, text="Copy Request", style="Ghost.TButton", command=self._copy_selected_form).pack(side="left", padx=8)
+        ttk.Button(controls, text="Mark Submitted", style="Ghost.TButton", command=self._mark_selected_form_submitted).pack(side="left")
+        ttk.Button(controls, text="Refresh", style="Ghost.TButton", command=self.refresh).pack(side="left", padx=8)
+
+        table_frame = ttk.Frame(self.forms_tab)
+        table_frame.grid(row=1, column=0, sticky="nsew", padx=(0, 10))
+        table_frame.columnconfigure(0, weight=1)
+        table_frame.rowconfigure(0, weight=1)
+        self.forms_tree = ttk.Treeview(table_frame, columns=("broker", "status", "url"), show="headings")
+        for column, width in (("broker", 180), ("status", 120), ("url", 300)):
+            self.forms_tree.heading(column, text=column.title())
+            self.forms_tree.column(column, width=width, anchor="w")
+        ybar = ttk.Scrollbar(table_frame, orient="vertical", command=self.forms_tree.yview)
+        self.forms_tree.configure(yscrollcommand=ybar.set)
+        self.forms_tree.grid(row=0, column=0, sticky="nsew")
+        ybar.grid(row=0, column=1, sticky="ns")
+        self.forms_tree.bind("<<TreeviewSelect>>", lambda _event: self._show_selected_form())
+
+        detail_frame = ttk.Frame(self.forms_tab)
+        detail_frame.grid(row=1, column=1, sticky="nsew")
+        detail_frame.columnconfigure(0, weight=1)
+        detail_frame.rowconfigure(1, weight=1)
+        ttk.Label(detail_frame, text="Selected Form Task", style="PanelTitle.TLabel").grid(row=0, column=0, sticky="w", pady=(0, 8))
+        detail_body = ttk.Frame(detail_frame)
+        detail_body.grid(row=1, column=0, sticky="nsew")
+        detail_body.columnconfigure(0, weight=1)
+        detail_body.rowconfigure(0, weight=1)
+        self.forms_text = self._text_panel(detail_body)
 
     def _field(self, parent: "ttk.Frame", row: int, label: str, variable: "tk.StringVar", browse: Any) -> None:
         ttk.Label(parent, text=label, style="Muted.TLabel").grid(row=row, column=0, sticky="w", pady=(10, 0))
@@ -432,26 +472,77 @@ class SupargusDesktop:
 
     def _populate_forms(self, state: dict[str, Any]) -> None:
         forms_path = state["paths"].get("forms", "")
-        tasks = []
         try:
-            if forms_path:
-                data = json.loads(Path(forms_path).read_text(encoding="utf-8"))
-                tasks = data.get("tasks", []) if isinstance(data, dict) else []
+            self.form_tasks = load_form_queue(forms_path) if forms_path else []
         except Exception:
-            tasks = []
+            self.form_tasks = []
+        self._clear_tree(self.forms_tree)
+        for idx, task in enumerate(self.form_tasks):
+            self.forms_tree.insert("", "end", iid=str(idx), values=(task.broker_name, task.status, task.opt_out_url))
+        if self.form_tasks:
+            first = "0"
+            self.forms_tree.selection_set(first)
+            self.forms_tree.focus(first)
+        self._show_selected_form()
+
+    def _selected_form_task(self) -> FormTask | None:
+        selected = self.forms_tree.selection()
+        if not selected:
+            return None
+        try:
+            return self.form_tasks[int(selected[0])]
+        except Exception:
+            return None
+
+    def _show_selected_form(self) -> None:
+        task = self._selected_form_task()
         self.forms_text.configure(state="normal")
         self.forms_text.delete("1.0", "end")
-        if not tasks:
+        if not task:
             self.forms_text.insert("end", "No manual form tasks yet. Prepare requests, then build the form queue.")
-        for item in tasks:
+        else:
             self.forms_text.insert(
                 "end",
-                f"{item.get('status', '').upper()}  {item.get('broker_name', '')}\n"
-                f"Opt-out form: {item.get('opt_out_url', '')}\n"
-                f"Profile: {item.get('profile_url', '')}\n\n"
-                f"{item.get('request_body', '').strip()}\n\n---\n\n",
+                f"{task.status.upper()}  {task.broker_name}\n"
+                f"Opt-out form: {task.opt_out_url}\n"
+                f"Profile: {task.profile_url}\n\n"
+                f"{task.request_body.strip()}\n",
             )
         self.forms_text.configure(state="disabled")
+
+    def _open_selected_form(self) -> None:
+        task = self._selected_form_task()
+        if not task:
+            return
+        webbrowser.open(task.opt_out_url)
+        self._log(f"Opened opt-out form:\n{task.opt_out_url}")
+
+    def _copy_selected_form(self) -> None:
+        task = self._selected_form_task()
+        if not task:
+            return
+        text = (
+            f"Broker: {task.broker_name}\n"
+            f"Opt-out form: {task.opt_out_url}\n"
+            f"Profile: {task.profile_url}\n\n"
+            f"{task.request_body.strip()}\n"
+        )
+        self.root.clipboard_clear()
+        self.root.clipboard_append(text)
+        self.status_var.set("Copied form request to clipboard")
+        self._log(f"Copied request payload for {task.broker_name}.")
+
+    def _mark_selected_form_submitted(self) -> None:
+        task = self._selected_form_task()
+        if not task:
+            return
+        forms_path = Path(self.workspace_var.get()) / "forms" / "forms.json"
+        try:
+            update_form_status(forms_path, task.broker_id, "submitted", notes="Submitted through desktop form queue")
+            self._log(f"Marked form submitted: {task.broker_name}")
+            self.refresh()
+        except Exception as exc:
+            self._log(f"Could not update form task:\n{exc}")
 
     def _clear_tree(self, tree: "ttk.Treeview") -> None:
         for item in tree.get_children():

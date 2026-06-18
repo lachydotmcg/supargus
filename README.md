@@ -453,7 +453,7 @@ Current app views:
 - Local Watchdog
 - Monitor Changes
 - Compliance Tracker
-- Form Queue
+- Form Queue with open/copy/mark-submitted controls
 - Evidence Bundle status
 
 From the desktop app you can run:
@@ -559,6 +559,7 @@ Supargus will not:
 - [x] tracker, follow-up, and bundle actions
 - [x] email preview/send actions
 - [x] form queue action
+- [x] desktop form queue workbench
 - [ ] editable review queue
 - [ ] request status editing from the app
 - [ ] browser-assisted opt-out form filling
