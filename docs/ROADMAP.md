@@ -21,7 +21,7 @@
 - [x] local schedule command generation
 - [x] Windows-first watchdog scan
 - [x] expanded residential proxy and bandwidth-sharing watchdog checks
-- [ ] 20+ high-signal broker detectors
+- [x] 20+ high-signal broker detectors
 
 ## Phase 2: Native App
 

@@ -170,7 +170,261 @@
         "requires": ["profile_url", "email_verification"]
       },
       "notes": ["Manual review recommended."]
+    },
+    {
+      "id": "truthfinder",
+      "name": "TruthFinder",
+      "type": "data_broker",
+      "regions": ["US"],
+      "search": {
+        "method": "url",
+        "url": "https://www.truthfinder.com/results/?firstName={first}&lastName={last}&state={state}",
+        "query_fields": ["first", "last", "state"]
+      },
+      "opt_out": {
+        "url": "https://www.truthfinder.com/opt-out/",
+        "method": "form",
+        "requires": ["profile_url", "email_verification"]
+      },
+      "notes": ["Manual result selection likely required."]
+    },
+    {
+      "id": "intelius",
+      "name": "Intelius",
+      "type": "data_broker",
+      "regions": ["US"],
+      "search": {
+        "method": "url",
+        "url": "https://www.intelius.com/people-search/{first}-{last}/",
+        "query_fields": ["first", "last"]
+      },
+      "opt_out": {
+        "url": "https://www.intelius.com/opt-out/",
+        "method": "form",
+        "requires": ["profile_url", "email_verification"]
+      },
+      "notes": ["Manual review recommended before submitting."]
+    },
+    {
+      "id": "instantcheckmate",
+      "name": "Instant Checkmate",
+      "type": "data_broker",
+      "regions": ["US"],
+      "search": {
+        "method": "url",
+        "url": "https://www.instantcheckmate.com/people/{first}-{last}/",
+        "query_fields": ["first", "last"]
+      },
+      "opt_out": {
+        "url": "https://www.instantcheckmate.com/opt-out/",
+        "method": "form",
+        "requires": ["profile_url", "email_verification"]
+      },
+      "notes": ["Opt-out flow may redirect through a shared privacy portal."]
+    },
+    {
+      "id": "peoplelooker",
+      "name": "PeopleLooker",
+      "type": "data_broker",
+      "regions": ["US"],
+      "search": {
+        "method": "url",
+        "url": "https://www.peoplelooker.com/people-search/{first}-{last}/",
+        "query_fields": ["first", "last"]
+      },
+      "opt_out": {
+        "url": "https://www.peoplelooker.com/opt-out/",
+        "method": "form",
+        "requires": ["profile_url", "email_verification"]
+      },
+      "notes": ["Manual identity selection likely required."]
+    },
+    {
+      "id": "checkpeople",
+      "name": "CheckPeople",
+      "type": "people_search",
+      "regions": ["US"],
+      "search": {
+        "method": "url",
+        "url": "https://checkpeople.com/people/{first}-{last}",
+        "query_fields": ["first", "last"]
+      },
+      "opt_out": {
+        "url": "https://checkpeople.com/opt-out",
+        "method": "form",
+        "requires": ["profile_url", "email_verification"]
+      },
+      "notes": ["Search and opt-out paths can change; verify before submitting."]
+    },
+    {
+      "id": "clustrmaps",
+      "name": "ClustrMaps",
+      "type": "people_search",
+      "regions": ["US"],
+      "search": {
+        "method": "url",
+        "url": "https://clustrmaps.com/persons/{first}-{last}",
+        "query_fields": ["first", "last"]
+      },
+      "opt_out": {
+        "url": "https://clustrmaps.com/bl/opt-out",
+        "method": "form",
+        "requires": ["profile_url", "email_verification"]
+      },
+      "notes": ["Manual review recommended."]
+    },
+    {
+      "id": "nuwber",
+      "name": "Nuwber",
+      "type": "people_search",
+      "regions": ["US"],
+      "search": {
+        "method": "url",
+        "url": "https://nuwber.com/search?name={name}&state={state}",
+        "query_fields": ["name", "state"]
+      },
+      "opt_out": {
+        "url": "https://nuwber.com/removal/link",
+        "method": "form",
+        "requires": ["profile_url", "email_verification"]
+      },
+      "notes": ["Manual profile URL review likely required."]
+    },
+    {
+      "id": "familytreenow",
+      "name": "FamilyTreeNow",
+      "type": "people_search",
+      "regions": ["US"],
+      "search": {
+        "method": "url",
+        "url": "https://www.familytreenow.com/search/genealogy/results?first={first}&last={last}&state={state}",
+        "query_fields": ["first", "last", "state"]
+      },
+      "opt_out": {
+        "url": "https://www.familytreenow.com/optout",
+        "method": "form",
+        "requires": ["profile_url", "email_verification"]
+      },
+      "notes": ["Manual result selection recommended."]
+    },
+    {
+      "id": "peekyou",
+      "name": "PeekYou",
+      "type": "people_search",
+      "regions": ["US"],
+      "search": {
+        "method": "url",
+        "url": "https://www.peekyou.com/{first}_{last}",
+        "query_fields": ["first", "last"]
+      },
+      "opt_out": {
+        "url": "https://www.peekyou.com/about/contact/optout/",
+        "method": "form",
+        "requires": ["profile_url", "email_verification"]
+      },
+      "notes": ["Manual profile URL review likely required."]
+    },
+    {
+      "id": "peoplewhiz",
+      "name": "PeopleWhiz",
+      "type": "people_search",
+      "regions": ["US"],
+      "search": {
+        "method": "url",
+        "url": "https://www.peoplewhiz.com/people/{first}-{last}",
+        "query_fields": ["first", "last"]
+      },
+      "opt_out": {
+        "url": "https://www.peoplewhiz.com/remove-my-info",
+        "method": "form",
+        "requires": ["profile_url", "email_verification"]
+      },
+      "notes": ["Manual review recommended."]
+    },
+    {
+      "id": "zabasearch",
+      "name": "ZabaSearch",
+      "type": "people_search",
+      "regions": ["US"],
+      "search": {
+        "method": "url",
+        "url": "https://www.zabasearch.com/people/{first}+{last}/",
+        "query_fields": ["first", "last"]
+      },
+      "opt_out": {
+        "url": "https://www.zabasearch.com/block_records/",
+        "method": "form",
+        "requires": ["profile_url", "verification"]
+      },
+      "notes": ["May share flows with other people-search services."]
+    },
+    {
+      "id": "veripages",
+      "name": "Veripages",
+      "type": "people_search",
+      "regions": ["US"],
+      "search": {
+        "method": "url",
+        "url": "https://veripages.com/name/{first}-{last}/",
+        "query_fields": ["first", "last"]
+      },
+      "opt_out": {
+        "url": "https://veripages.com/remove",
+        "method": "form",
+        "requires": ["profile_url", "email_verification"]
+      },
+      "notes": ["Manual review recommended."]
+    },
+    {
+      "id": "publicrecordsnow",
+      "name": "PublicRecordsNow",
+      "type": "people_search",
+      "regions": ["US"],
+      "search": {
+        "method": "url",
+        "url": "https://www.publicrecordsnow.com/name/{first}-{last}",
+        "query_fields": ["first", "last"]
+      },
+      "opt_out": {
+        "url": "https://www.publicrecordsnow.com/static/view/optout",
+        "method": "form",
+        "requires": ["profile_url", "email_verification"]
+      },
+      "notes": ["Manual review recommended."]
+    },
+    {
+      "id": "advancedbackgroundchecks",
+      "name": "Advanced Background Checks",
+      "type": "people_search",
+      "regions": ["US"],
+      "search": {
+        "method": "url",
+        "url": "https://www.advancedbackgroundchecks.com/names/{first}-{last}",
+        "query_fields": ["first", "last"]
+      },
+      "opt_out": {
+        "url": "https://www.advancedbackgroundchecks.com/removal",
+        "method": "form",
+        "requires": ["profile_url", "email_verification"]
+      },
+      "notes": ["Search paths may change; manual review required."]
+    },
+    {
+      "id": "cyberbackgroundchecks",
+      "name": "CyberBackgroundChecks",
+      "type": "people_search",
+      "regions": ["US"],
+      "search": {
+        "method": "url",
+        "url": "https://www.cyberbackgroundchecks.com/people/{first}-{last}",
+        "query_fields": ["first", "last"]
+      },
+      "opt_out": {
+        "url": "https://www.cyberbackgroundchecks.com/removal",
+        "method": "form",
+        "requires": ["profile_url", "email_verification"]
+      },
+      "notes": ["Manual profile URL review likely required."]
     }
   ]
 }
-
