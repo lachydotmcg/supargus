@@ -25,7 +25,7 @@ from supargus.schedule import cron_line, schedule_instructions, schtasks_create_
 from supargus.takedown import prepare_requests
 from supargus.tracker import due_for_follow_up, import_requests, load_tracker, prepare_followups, update_status
 from supargus.vault import open_file, seal_file, vault_available
-from supargus.watchdog import check_env_proxies
+from supargus.watchdog import _token_hits, check_env_proxies, check_installed_app_signatures
 from supargus.workflow import run_workflow
 
 
@@ -90,6 +90,20 @@ class SupargusCoreTests(unittest.TestCase):
             findings = check_env_proxies()
         self.assertEqual(len(findings), 1)
         self.assertIn("HTTP_PROXY", findings[0].title)
+
+    def test_watchdog_token_hits_include_residential_proxy_terms(self) -> None:
+        hits = dict(_token_hits("Oxylabs residential proxy manager and Honeygain client"))
+        self.assertIn("oxylabs", hits)
+        self.assertIn("honeygain", hits)
+
+    def test_installed_app_signature_detection(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "Honeygain").mkdir()
+            with patch("supargus.watchdog._install_roots", return_value=[root]):
+                findings = check_installed_app_signatures()
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0].category, "installed_app")
 
     def test_identity_from_dict(self) -> None:
         profile = identity_from_dict({"full_name": "A B", "emails": ["a@example.com"]})
