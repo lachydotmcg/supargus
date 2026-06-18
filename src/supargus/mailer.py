@@ -22,6 +22,43 @@ class SmtpConfig:
     use_tls: bool = True
 
 
+def smtp_config_to_dict(config: SmtpConfig, *, redact_password: bool = False) -> dict:
+    return {
+        "host": config.host,
+        "port": config.port,
+        "username": config.username,
+        "password": "[REDACTED]" if redact_password and config.password else config.password,
+        "from_addr": config.from_addr,
+        "use_tls": config.use_tls,
+    }
+
+
+def gmail_smtp_config(email: str, app_password: str, *, from_addr: str = "") -> SmtpConfig:
+    clean_email = email.strip()
+    password = app_password.replace(" ", "").strip()
+    if not clean_email:
+        raise ValueError("Gmail address is required")
+    if len(password) < 16:
+        raise ValueError("Gmail app password should be the 16-character app password from Google")
+    return SmtpConfig(
+        host="smtp.gmail.com",
+        port=465,
+        username=clean_email,
+        password=password,
+        from_addr=from_addr.strip() or clean_email,
+        use_tls=True,
+    )
+
+
+def save_smtp_config(config: SmtpConfig, path: str | Path, *, force: bool = False) -> Path:
+    p = Path(path)
+    if p.exists() and not force:
+        raise FileExistsError(f"{p} already exists; pass --force to overwrite")
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps(smtp_config_to_dict(config), indent=2), encoding="utf-8")
+    return p
+
+
 def load_smtp_config(path: str | Path | None = None) -> SmtpConfig:
     data = {}
     if path:
@@ -83,4 +120,3 @@ def send_requests(
             request.status = "sent"
             sent.append({"broker_id": request.broker_id, "to": request.to_email, "subject": request.subject})
     return sent
-

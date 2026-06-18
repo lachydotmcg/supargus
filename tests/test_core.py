@@ -9,11 +9,15 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import patch
 
-from supargus.app import render_dashboard
+from supargus.app import build_state, render_dashboard, run_action
 from supargus.broker import build_search_url, score_broker_page, search_brokers
 from supargus.bundle import export_bundle
+from supargus.cli import build_parser
 from supargus.config import WorkflowConfig, load_config, save_default_config
+from supargus.desktop import DESKTOP_ACTIONS
+from supargus.forms import build_form_queue, format_form_queue
 from supargus.identity import identity_from_dict, sample_identity, save_identity, load_identity
+from supargus.mailer import gmail_smtp_config, load_smtp_config, save_smtp_config
 from supargus.monitor import diff_matches, diff_payload, save_snapshot, latest_snapshot
 from supargus.models import BrokerMatch
 from supargus.registry import load_default_brokers, validate_brokers
@@ -96,7 +100,90 @@ class SupargusCoreTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             html = render_dashboard(tmp)
         self.assertIn("Supargus", html)
-        self.assertIn("Run supargus brokers find", html)
+        self.assertIn("Command Center", html)
+        self.assertIn("Run full workflow", html)
+
+    def test_build_state_summarizes_workspace_outputs(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "broker_matches.json").write_text(
+                json.dumps(
+                    {
+                        "summary": {"checked": 2, "possible_matches": 1, "manual_review": 1},
+                        "matches": [{"broker_id": "a", "broker_name": "Broker A", "status": "possible_match"}],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (root / "watchdog.json").write_text(
+                json.dumps({"summary": {"findings": 1, "high": 1}, "findings": [{"title": "Proxy", "severity": "high"}]}),
+                encoding="utf-8",
+            )
+            state = build_state(root)
+        self.assertEqual(state["summary"]["brokers_checked"], 2)
+        self.assertEqual(state["summary"]["possible_matches"], 1)
+        self.assertEqual(state["summary"]["watchdog_findings"], 1)
+        self.assertEqual(len(state["matches"]), 1)
+
+    def test_app_validate_action(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            result = run_action(Path(tmp), {"action": "validate", "workspace": tmp})
+        self.assertTrue(result["valid"])
+        self.assertEqual(result["errors"], [])
+
+    def test_gmail_smtp_config_roundtrip(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "smtp.gmail.json"
+            config = gmail_smtp_config("jane@example.com", "abcd efgh ijkl mnop")
+            save_smtp_config(config, path)
+            loaded = load_smtp_config(path)
+        self.assertEqual(loaded.host, "smtp.gmail.com")
+        self.assertEqual(loaded.port, 465)
+        self.assertEqual(loaded.username, "jane@example.com")
+        self.assertEqual(loaded.password, "abcdefghijklmnop")
+
+    def test_form_queue_from_manual_request(self) -> None:
+        profile = sample_identity()
+        broker = load_default_brokers()[0]
+        broker.opt_out.contact_email = ""
+        match = BrokerMatch(
+            broker_id=broker.id,
+            broker_name=broker.name,
+            status="needs_manual_review",
+            confidence="unknown",
+            score=0,
+            search_url="https://example.com/search",
+            evidence_url="https://example.com/profile/jane",
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            requests, _ = prepare_requests([match], [broker], profile, Path(tmp) / "requests")
+            tasks, manifest = build_form_queue(requests, Path(tmp) / "forms" / "forms.json")
+            formatted = format_form_queue(tasks)
+            self.assertTrue(manifest.exists())
+        self.assertEqual(len(tasks), 1)
+        self.assertIn(broker.id, formatted)
+
+    def test_desktop_actions_cover_core_workflow(self) -> None:
+        actions = {action for action, _, _ in DESKTOP_ACTIONS}
+        self.assertIn("workflow", actions)
+        self.assertIn("broker_scan", actions)
+        self.assertIn("watchdog", actions)
+        self.assertIn("mail_preview", actions)
+        self.assertIn("form_queue", actions)
+        self.assertIn("bundle", actions)
+
+    def test_cli_app_is_desktop_and_web_is_fallback(self) -> None:
+        parser = build_parser()
+        app_args = parser.parse_args(["app", "--workspace", "workspace"])
+        web_args = parser.parse_args(["web", "--workspace", "workspace", "--port", "8765"])
+        gmail_args = parser.parse_args(["mail", "setup-gmail", "--email", "a@example.com", "--app-password", "abcdefghijklmnop"])
+        form_args = parser.parse_args(["forms", "build", "--requests", "workspace/requests/requests.json"])
+        self.assertEqual(app_args.command, "app")
+        self.assertEqual(app_args.workspace, "workspace")
+        self.assertEqual(web_args.command, "web")
+        self.assertEqual(web_args.port, 8765)
+        self.assertEqual(gmail_args.mail_command, "setup-gmail")
+        self.assertEqual(form_args.forms_command, "build")
 
     def test_tracker_import_update_and_due(self) -> None:
         profile = sample_identity()

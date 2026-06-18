@@ -21,6 +21,7 @@ DEFAULT_BUNDLE_PATTERNS = [
     "watchdog.html",
     "requests/requests.json",
     "requests/*.txt",
+    "forms/forms.json",
     "followups/requests.json",
     "followups/*.txt",
 ]
@@ -80,4 +81,3 @@ def export_bundle(
         zf.writestr("manifest.json", json.dumps(manifest, indent=2))
 
     return out, manifest
-

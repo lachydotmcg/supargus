@@ -1,6 +1,16 @@
 # Supargus
 
-Local-first privacy watchdog.
+```text
+   _______  __  __  ____   ___  ____   ____  _   _  ____
+  / ___/ / / / / / / __ \ / _ \/ __ \ / __ \/ | / |/ ___/
+  \__ \/ / / / / / / /_/ // ___/ /_/ // /_/ /  |/ /\__ \
+ ___/ / /_/ / /_/ / ____// /  / _, _// _, _/ /|  /___/ /
+/____/\____/\____/_/    /_/  /_/ |_|/_/ |_/_/ |_//____/
+
+        local-first removal ops // broker radar // proxy watchdog
+```
+
+Local-first privacy watchdog and removal console.
 
 Your data is working a second job. Supargus helps you find where it is exposed, prepare takedown requests yourself, track who responds, and inspect your own machine for hidden participation in the data economy.
 
@@ -15,7 +25,7 @@ Supargus has two jobs:
 1. Find public exposure tied to your identity.
 2. Watch your local machine for privacy risks you did not knowingly install.
 
-It is designed as both a CLI and a local app.
+It is designed as both a CLI and a native desktop app.
 
 ```bash
 supargus init
@@ -23,6 +33,8 @@ supargus scan --identity workspace/identity.example.json --output-dir workspace 
 supargus brokers find --identity workspace/identity.example.json
 supargus takedown prepare --identity workspace/identity.example.json --matches workspace/broker_matches.json
 supargus mail preview
+supargus mail setup-gmail --email you@gmail.com --app-password "xxxx xxxx xxxx xxxx"
+supargus forms build --requests workspace/requests/requests.json --output workspace/forms/forms.json
 supargus track import --requests workspace/requests/requests.json --tracker workspace/tracker.json
 supargus track list --tracker workspace/tracker.json
 supargus track followup --tracker workspace/tracker.json --output-dir workspace/followups
@@ -35,7 +47,20 @@ supargus workflow run --config supargus.config.json
 supargus schedule print --config supargus.config.json --time 09:00
 supargus watchdog scan
 supargus app --workspace workspace
+supargus-app
 ```
+
+Open the desktop command console straight away:
+
+```bash
+supargus app --workspace workspace
+```
+
+On Windows installs, `supargus-app` is also exposed as a GUI launcher. It opens as a real application window on your taskbar, not as a localhost browser tab.
+
+The app is a private control room for the same workflow: run broker scans, launch the full workflow, inspect watchdog findings, prepare takedown drafts, import the tracker, generate follow-ups, and export an evidence bundle from one native window.
+
+The goal is not another account you have to trust. The goal is a local control plane that can do the boring removal work while you keep the identity profile, mailbox credentials, evidence, and audit trail on your own machine.
 
 ## Quick Start
 
@@ -94,6 +119,32 @@ Preview the request queue:
 supargus mail preview --requests workspace/requests/requests.json
 ```
 
+Set up Gmail sending with an app password:
+
+```bash
+supargus mail setup-gmail \
+  --email you@gmail.com \
+  --app-password "xxxx xxxx xxxx xxxx" \
+  --output workspace/smtp.gmail.json
+```
+
+Then send only after previewing:
+
+```bash
+supargus mail preview --requests workspace/requests/requests.json
+supargus mail send --requests workspace/requests/requests.json --smtp-config workspace/smtp.gmail.json --yes
+```
+
+Google recommends Sign in with Google/OAuth where possible; app passwords are the pragmatic local MVP for Gmail accounts with 2-Step Verification enabled. Keep `workspace/smtp.gmail.json` private and revoke the app password if it leaks.
+
+Build a manual opt-out form queue for brokers that do not accept email:
+
+```bash
+supargus forms build --requests workspace/requests/requests.json --output workspace/forms/forms.json
+supargus forms list --queue workspace/forms/forms.json
+supargus forms update fastpeoplesearch submitted --queue workspace/forms/forms.json --notes "Submitted through website form"
+```
+
 Track follow-ups:
 
 ```bash
@@ -120,7 +171,7 @@ supargus monitor diff --current workspace/broker_matches.json --history-dir work
 
 `monitor scan` writes a fresh `broker_matches.json`, compares it with the latest snapshot when one exists, writes `monitor_diff.json`, and then saves the new snapshot.
 
-Open the local dashboard:
+Open the desktop app:
 
 ```bash
 supargus app --workspace workspace
@@ -341,33 +392,82 @@ Because privacy tools should not casually send your identity profile, broker mat
 - support local models later
 - let users disable all AI calls globally
 
+## Residential Proxy Watchdog
+
+The uncomfortable bit: residential proxy networks are valuable because they route traffic through real consumer-looking IP space. Sometimes that infrastructure is sold by obvious proxy providers. Sometimes it is sourced through SDKs, bandwidth-sharing apps, browser extensions, or bundled software that ordinary users barely understand.
+
+Supargus treats that as a consent and visibility problem.
+
+The watchdog looks for local signals that your machine might be configured as someone else's network resource:
+
+- proxy environment variables
+- system proxy settings
+- suspicious local listeners
+- VPN, tunnel, packet-capture, and proxy-manager processes
+- browser extensions with broad network permissions
+- startup entries and scheduled tasks
+- certificates, DNS, and hosts-file changes
+
+This is not about claiming every proxy company is malicious. It is about giving people a local way to ask: "Is my computer routing, monetizing, or leaking traffic in a way I did not knowingly approve?"
+
+Public context worth knowing:
+
+- Tesonet's own portfolio lists Surfshark and Oxylabs: <https://tesonet.com/portfolio/>
+- Surfshark says Incogni was created within Surfshark and is now a standalone product: <https://surfshark.com/incogni>
+- Oxylabs markets residential proxy products and large-scale web data collection tooling: <https://oxylabs.io/products/residential-proxy-pool>
+
+That overlap is exactly why Supargus is local-first. A privacy tool should not require you to upload more private identifiers to another opaque intermediary before you can begin cleaning up the exposure.
+
 ```bash
 supargus config set ai.enabled false
 supargus config set ai.provider local
 supargus scan --no-ai
 ```
 
-## Local App
+## Desktop App
 
-The CLI should come first. The app makes it humane.
+The CLI is still the power layer. The desktop app makes it humane.
 
-The current MVP includes a small local dashboard:
+The current app is a native local-first command console. It opens as its own desktop window and appears on your taskbar:
 
 ```bash
-supargus app --workspace workspace --host 127.0.0.1 --port 8765
+supargus app --workspace workspace
 ```
 
-Planned app views:
+On Windows installs you can also use the GUI launcher:
 
-- Exposure Map
-- Broker Matches
-- Removal Requests
-- Needs Review
-- Sent Mail
-- Follow-Up Queue
-- Reappeared Profiles
-- Local Watchdog Findings
-- Evidence Bundle
+```bash
+supargus-app
+```
+
+There is still a fallback web console for development or remote environments:
+
+```bash
+supargus web --workspace workspace --host 127.0.0.1 --port 8765
+```
+
+Current app views:
+
+- Command Center
+- Broker Radar
+- Local Watchdog
+- Monitor Changes
+- Compliance Tracker
+- Form Queue
+- Evidence Bundle status
+
+From the desktop app you can run:
+
+- full workflow
+- broker scan
+- watchdog scan
+- request draft generation
+- Gmail/app-password email preview and send
+- manual opt-out form queue generation
+- tracker import
+- follow-up draft generation
+- evidence bundle export
+- broker registry validation
 
 All data stays on your machine unless you explicitly send a request or enable an external provider.
 
@@ -435,7 +535,9 @@ Supargus will not:
 - [x] HTML/JSON reports
 - [x] request template generator
 - [x] SMTP preview/send support
+- [x] Gmail app-password SMTP setup
 - [x] compliance tracker
+- [x] manual opt-out form queue
 - [x] follow-up draft generation
 - [x] recurring scan snapshots and reappearance diffs
 - [x] zipped evidence bundle export
@@ -446,13 +548,24 @@ Supargus will not:
 
 ### Phase 2: Local App
 
-- [x] tiny standard-library local dashboard
-- [ ] FastAPI backend
-- review queue
-- request status tracker
-- scheduled re-scans
-- evidence screenshots
-- Gmail OAuth integration
+- [x] native desktop app entrypoint
+- [x] taskbar window command console
+- [x] metrics, results tabs, and run log
+- [x] standard-library local app server
+- [x] SaaS-style command console
+- [x] broker scan action
+- [x] watchdog scan action
+- [x] full workflow action
+- [x] tracker, follow-up, and bundle actions
+- [x] email preview/send actions
+- [x] form queue action
+- [ ] editable review queue
+- [ ] request status editing from the app
+- [ ] browser-assisted opt-out form filling
+- [ ] Gmail OAuth integration
+- [ ] scheduled re-scan manager
+- [ ] evidence screenshots
+- [ ] optional FastAPI backend when the app outgrows the standard library
 
 ### Phase 3: Power Features
 

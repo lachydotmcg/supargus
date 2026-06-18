@@ -11,8 +11,10 @@ from .broker import search_brokers
 from .app import run_app
 from .bundle import export_bundle
 from .config import DEFAULT_CONFIG_NAME, load_config, save_default_config
+from .desktop import run_desktop_app
+from .forms import build_form_queue, format_form_queue, load_form_queue, update_form_status
 from .identity import load_identity, sample_identity, save_identity
-from .mailer import load_smtp_config, preview_requests, send_requests
+from .mailer import gmail_smtp_config, load_smtp_config, preview_requests, save_smtp_config, send_requests
 from .models import BrokerMatch, to_dict
 from .monitor import diff_payload, latest_snapshot, save_snapshot, write_diff
 from .registry import load_registry, validate_registry
@@ -102,6 +104,14 @@ def cmd_mail_preview(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_mail_setup_gmail(args: argparse.Namespace) -> int:
+    config = gmail_smtp_config(args.email, args.app_password, from_addr=args.from_addr)
+    out = save_smtp_config(config, args.output, force=args.force)
+    print(f"Wrote Gmail SMTP config: {out}")
+    print("Keep this file private. Revoke the app password in Google Account settings if it is exposed.")
+    return 0
+
+
 def cmd_mail_send(args: argparse.Namespace) -> int:
     if not args.yes:
         print("Refusing to send without --yes. Run `supargus mail preview` first.")
@@ -110,6 +120,24 @@ def cmd_mail_send(args: argparse.Namespace) -> int:
     config = load_smtp_config(args.smtp_config)
     sent = send_requests(requests, config, limit=args.limit)
     print(f"Sent {len(sent)} email request(s).")
+    return 0
+
+
+def cmd_forms_build(args: argparse.Namespace) -> int:
+    requests = load_requests(args.requests)
+    tasks, manifest = build_form_queue(requests, args.output)
+    print(f"Prepared {len(tasks)} manual form task(s): {manifest}")
+    return 0
+
+
+def cmd_forms_list(args: argparse.Namespace) -> int:
+    print(format_form_queue(load_form_queue(args.queue)))
+    return 0
+
+
+def cmd_forms_update(args: argparse.Namespace) -> int:
+    tasks = update_form_status(args.queue, args.broker_id, args.status, notes=args.notes)
+    print(f"Updated form queue. {len(tasks)} task(s) total.")
     return 0
 
 
@@ -310,12 +338,35 @@ def build_parser() -> argparse.ArgumentParser:
     p_preview = mail_sub.add_parser("preview", help="preview generated requests")
     p_preview.add_argument("--requests", default="reports/requests/requests.json")
     p_preview.set_defaults(func=cmd_mail_preview)
+    p_setup_gmail = mail_sub.add_parser("setup-gmail", help="write an SMTP config for a Gmail app password")
+    p_setup_gmail.add_argument("--email", required=True)
+    p_setup_gmail.add_argument("--app-password", required=True)
+    p_setup_gmail.add_argument("--from-addr", default="")
+    p_setup_gmail.add_argument("--output", default="workspace/smtp.gmail.json")
+    p_setup_gmail.add_argument("--force", action="store_true")
+    p_setup_gmail.set_defaults(func=cmd_mail_setup_gmail)
     p_send = mail_sub.add_parser("send", help="send generated email requests via SMTP")
     p_send.add_argument("--requests", default="reports/requests/requests.json")
     p_send.add_argument("--smtp-config")
     p_send.add_argument("--limit", type=int)
     p_send.add_argument("--yes", action="store_true")
     p_send.set_defaults(func=cmd_mail_send)
+
+    p_forms = sub.add_parser("forms", help="build and track manual opt-out form tasks")
+    forms_sub = p_forms.add_subparsers(dest="forms_command", required=True)
+    p_forms_build = forms_sub.add_parser("build", help="build manual form tasks from request drafts")
+    p_forms_build.add_argument("--requests", default="reports/requests/requests.json")
+    p_forms_build.add_argument("--output", default="reports/forms/forms.json")
+    p_forms_build.set_defaults(func=cmd_forms_build)
+    p_forms_list = forms_sub.add_parser("list", help="list manual form tasks")
+    p_forms_list.add_argument("--queue", default="reports/forms/forms.json")
+    p_forms_list.set_defaults(func=cmd_forms_list)
+    p_forms_update = forms_sub.add_parser("update", help="update one manual form task status")
+    p_forms_update.add_argument("broker_id")
+    p_forms_update.add_argument("status")
+    p_forms_update.add_argument("--queue", default="reports/forms/forms.json")
+    p_forms_update.add_argument("--notes", default="")
+    p_forms_update.set_defaults(func=cmd_forms_update)
 
     p_watchdog = sub.add_parser("watchdog", help="local machine privacy checks")
     watchdog_sub = p_watchdog.add_subparsers(dest="watchdog_command", required=True)
@@ -415,11 +466,21 @@ def build_parser() -> argparse.ArgumentParser:
     p_schedule_print.add_argument("--time", default="09:00")
     p_schedule_print.set_defaults(func=cmd_schedule_print)
 
-    p_app = sub.add_parser("app", help="serve the local Supargus dashboard")
-    p_app.add_argument("--workspace", default="reports/latest")
-    p_app.add_argument("--host", default="127.0.0.1")
-    p_app.add_argument("--port", type=int, default=8765)
-    p_app.set_defaults(func=lambda args: run_app(args.workspace, args.host, args.port) or 0)
+    p_app = sub.add_parser("app", help="open the Supargus desktop app")
+    p_app.add_argument("--workspace", default="workspace")
+    p_app.set_defaults(func=lambda args: run_desktop_app(args.workspace))
+
+    p_web = sub.add_parser("web", help="serve the fallback local web console")
+    p_web.add_argument("--workspace", default="reports/latest")
+    p_web.add_argument("--host", default="127.0.0.1")
+    p_web.add_argument("--port", type=int, default=8765)
+    p_web.set_defaults(func=lambda args: run_app(args.workspace, args.host, args.port) or 0)
+
+    p_app_legacy = sub.add_parser("dashboard", help=argparse.SUPPRESS)
+    p_app_legacy.add_argument("--workspace", default="reports/latest")
+    p_app_legacy.add_argument("--host", default="127.0.0.1")
+    p_app_legacy.add_argument("--port", type=int, default=8765)
+    p_app_legacy.set_defaults(func=lambda args: run_app(args.workspace, args.host, args.port) or 0)
 
     return parser
 

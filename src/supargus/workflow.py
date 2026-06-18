@@ -7,6 +7,7 @@ from pathlib import Path
 from .broker import search_brokers
 from .bundle import export_bundle
 from .config import WorkflowConfig
+from .forms import build_form_queue
 from .identity import load_identity
 from .monitor import latest_snapshot, save_snapshot, write_diff
 from .registry import load_registry
@@ -66,6 +67,9 @@ def run_workflow(config: WorkflowConfig, *, registry_paths: list[str] | None = N
         )
         outputs["request_manifest"] = str(manifest)
         outputs["request_count"] = len(requests)
+        form_tasks, form_manifest = build_form_queue(requests, workspace / "forms" / "forms.json")
+        outputs["form_queue"] = str(form_manifest)
+        outputs["form_tasks"] = len(form_tasks)
         if config.import_tracker:
             records = import_requests(requests, config.tracker)
             outputs["tracker"] = str(config.tracker)
@@ -83,4 +87,3 @@ def run_workflow(config: WorkflowConfig, *, registry_paths: list[str] | None = N
         outputs["bundle_files"] = int(manifest["file_count"])
 
     return outputs
-
