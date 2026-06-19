@@ -8,6 +8,7 @@ import queue
 import sys
 import threading
 import webbrowser
+from importlib.resources import files
 from pathlib import Path
 from typing import Any
 
@@ -27,18 +28,39 @@ except Exception:  # pragma: no cover - depends on local Python GUI support.
 
 
 DESKTOP_ACTIONS: tuple[tuple[str, str, str], ...] = (
-    ("workflow", "Run Full Workflow", "Scan, diff, watchdog, drafts, tracker, follow-ups, bundle."),
-    ("broker_scan", "Broker Scan", "Generate broker evidence and the local report."),
-    ("watchdog", "Watchdog Scan", "Inspect this machine for local privacy risks."),
-    ("prepare_requests", "Prepare Requests", "Create takedown drafts from broker matches."),
-    ("form_queue", "Build Form Queue", "Collect brokers that require manual opt-out forms."),
-    ("mail_preview", "Preview Email Queue", "Review the email requests ready to send."),
-    ("mail_send", "Send Reviewed Emails", "Send request drafts through your SMTP or Gmail app password config."),
-    ("tracker_import", "Import Tracker", "Track request status and follow-up windows."),
-    ("followups", "Generate Follow-Ups", "Create follow-up drafts for tracked requests."),
-    ("bundle", "Export Bundle", "Zip evidence, drafts, reports, and hashes."),
-    ("validate", "Validate Registry", "Check broker adapters before scanning."),
+    ("workflow", "Run privacy check", "Scan exposure, create drafts, update tracker, and export receipts."),
+    ("broker_scan", "Scan data brokers", "Check the broker registry for likely exposure."),
+    ("watchdog", "Scan this PC", "Look for proxy, extension, startup, and bandwidth-sharing signals."),
+    ("prepare_requests", "Prepare removals", "Create readable takedown drafts from broker matches."),
+    ("form_queue", "Build form queue", "Collect brokers that need manual opt-out forms."),
+    ("mail_preview", "Preview emails", "Review request emails before anything is sent."),
+    ("mail_send", "Send reviewed emails", "Send approved requests through your SMTP or Gmail app password config."),
+    ("tracker_import", "Import tracker", "Track requests, status, and follow-up dates."),
+    ("followups", "Generate follow-ups", "Create follow-up drafts for pending requests."),
+    ("bundle", "Export receipts", "Zip evidence, reports, drafts, and hashes."),
+    ("validate", "Validate registry", "Check broker adapters before scanning."),
 )
+
+
+COLORS = {
+    "bg": "#f4f6fb",
+    "surface": "#ffffff",
+    "surface_alt": "#f8fafc",
+    "nav": "#ffffff",
+    "line": "#e4e9f2",
+    "ink": "#111827",
+    "muted": "#64748b",
+    "soft": "#eef3f9",
+    "navy": "#101923",
+    "blue": "#101923",
+    "blue_dark": "#243447",
+    "yellow": "#f6b40b",
+    "yellow_soft": "#fff6d8",
+    "green": "#16a34a",
+    "green_soft": "#eaf8ef",
+    "red": "#b42318",
+    "red_soft": "#fff0ed",
+}
 
 
 def _set_windows_app_id() -> None:
@@ -61,12 +83,40 @@ def _fmt_bytes(value: int) -> str:
     return f"{value} B"
 
 
+def _asset_path(name: str) -> str:
+    try:
+        return str(files("supargus").joinpath("assets", name))
+    except Exception:
+        return str(Path.cwd() / name)
+
+
+def _privacy_score(summary: dict[str, Any]) -> int:
+    score = 100
+    score -= min(32, int(summary.get("possible_matches", 0) or 0) * 4)
+    score -= min(24, int(summary.get("watchdog_findings", 0) or 0) * 6)
+    score -= min(18, int(summary.get("scan_changes", 0) or 0) * 5)
+    score += min(10, int(summary.get("request_drafts", 0) or 0) * 2)
+    return max(0, min(100, score))
+
+
+def _score_label(score: int) -> tuple[str, str]:
+    if score >= 85:
+        return "Protected", COLORS["green"]
+    if score >= 65:
+        return "Needs review", COLORS["yellow"]
+    return "Action needed", COLORS["red"]
+
+
 class SupargusDesktop:
     def __init__(self, root: "tk.Tk", workspace: str | Path) -> None:
         self.root = root
-        self.queue: "queue.Queue[tuple[str, Any]]" = queue.Queue()
+        self.queue: "queue.Queue[tuple[str, str, Any]]" = queue.Queue()
         self.buttons: list["tk.Widget"] = []
+        self.nav_buttons: dict[str, "tk.Button"] = {}
+        self.pages: dict[str, "tk.Frame"] = {}
         self.form_tasks: list[FormTask] = []
+        self.custom_targets: list[Any] = []
+        self.state: dict[str, Any] = {}
 
         workspace_path = Path(workspace)
         self.workspace_var = tk.StringVar(value=str(workspace_path))
@@ -85,294 +135,372 @@ class SupargusDesktop:
             "changes": tk.StringVar(value="0"),
             "requests": tk.StringVar(value="0"),
             "bundle": tk.StringVar(value="0 B"),
+            "score": tk.StringVar(value="100"),
+            "score_label": tk.StringVar(value="Protected"),
         }
 
         self._configure_window()
+        self._load_logo()
         self._build_layout()
         self.refresh()
+        self.show_page("home")
         self.root.after(100, self._drain_queue)
 
     def _configure_window(self) -> None:
         self.root.title("Supargus")
-        self.root.geometry("1280x820")
-        self.root.minsize(1080, 700)
-        self.root.configure(bg="#f5f8fa")
+        self.root.geometry("1060x720")
+        self.root.minsize(940, 640)
+        self.root.configure(bg=COLORS["bg"])
 
         style = ttk.Style(self.root)
         try:
             style.theme_use("clam")
         except tk.TclError:
             pass
+        style.configure("Treeview", font=("Segoe UI", 9), rowheight=30, background="#ffffff", fieldbackground="#ffffff", borderwidth=0)
+        style.configure("Treeview.Heading", font=("Segoe UI", 9, "bold"), background="#f8fafc", foreground=COLORS["muted"])
+        style.map("Treeview", background=[("selected", "#dbeafe")], foreground=[("selected", COLORS["ink"])])
 
-        style.configure("TFrame", background="#f5f8fa")
-        style.configure("Panel.TFrame", background="#ffffff", relief="flat")
-        style.configure("Sidebar.TFrame", background="#102027")
-        style.configure("Title.TLabel", background="#f5f8fa", foreground="#102027", font=("Segoe UI", 28, "bold"))
-        style.configure("Subtitle.TLabel", background="#f5f8fa", foreground="#52656d", font=("Segoe UI", 11))
-        style.configure("SidebarTitle.TLabel", background="#102027", foreground="#f4fbfb", font=("Segoe UI", 17, "bold"))
-        style.configure("SidebarText.TLabel", background="#102027", foreground="#b8ccd2", font=("Segoe UI", 9))
-        style.configure("PanelTitle.TLabel", background="#ffffff", foreground="#102027", font=("Segoe UI", 13, "bold"))
-        style.configure("Muted.TLabel", background="#ffffff", foreground="#52656d", font=("Segoe UI", 9))
-        style.configure("MetricValue.TLabel", background="#ffffff", foreground="#102027", font=("Segoe UI", 22, "bold"))
-        style.configure("MetricLabel.TLabel", background="#ffffff", foreground="#52656d", font=("Segoe UI", 9))
-        style.configure("Primary.TButton", font=("Segoe UI", 10, "bold"), padding=(12, 8))
-        style.configure("Ghost.TButton", font=("Segoe UI", 9), padding=(10, 7))
-        style.configure("Treeview", font=("Segoe UI", 9), rowheight=28, background="#ffffff", fieldbackground="#ffffff")
-        style.configure("Treeview.Heading", font=("Segoe UI", 9, "bold"))
+    def _load_logo(self) -> None:
+        self.logo_image = None
+        self.icon_image = None
+        try:
+            image = tk.PhotoImage(file=_asset_path("logo.png"))
+            logo_factor = max(1, image.width() // 46)
+            icon_factor = max(1, image.width() // 128)
+            self.logo_image = image.subsample(logo_factor, logo_factor)
+            self.icon_image = image.subsample(icon_factor, icon_factor)
+            self.root.iconphoto(True, self.icon_image)
+        except Exception:
+            self.logo_image = None
+            self.icon_image = None
 
     def _build_layout(self) -> None:
-        shell = ttk.Frame(self.root)
-        shell.pack(fill="both", expand=True)
-        shell.columnconfigure(1, weight=1)
-        shell.rowconfigure(0, weight=1)
+        self.shell = tk.Frame(self.root, bg=COLORS["bg"])
+        self.shell.pack(fill="both", expand=True)
+        self.shell.columnconfigure(1, weight=1)
+        self.shell.rowconfigure(1, weight=1)
 
-        sidebar = ttk.Frame(shell, style="Sidebar.TFrame", width=252)
-        sidebar.grid(row=0, column=0, sticky="ns")
-        sidebar.grid_propagate(False)
-        sidebar.columnconfigure(0, weight=1)
+        self._build_topbar()
+        self._build_sidebar()
 
-        brand = ttk.Frame(sidebar, style="Sidebar.TFrame")
-        brand.grid(row=0, column=0, sticky="ew", padx=22, pady=(24, 12))
-        ttk.Label(brand, text="Supargus", style="SidebarTitle.TLabel").pack(anchor="w")
-        ttk.Label(brand, text="Desktop privacy operations", style="SidebarText.TLabel").pack(anchor="w", pady=(2, 0))
+        self.content = tk.Frame(self.shell, bg=COLORS["bg"])
+        self.content.grid(row=1, column=1, sticky="nsew", padx=22, pady=18)
+        self.content.columnconfigure(0, weight=1)
+        self.content.rowconfigure(0, weight=1)
 
-        nav = ttk.Frame(sidebar, style="Sidebar.TFrame")
-        nav.grid(row=1, column=0, sticky="ew", padx=18, pady=18)
-        for label, tab in (
-            ("Command Center", "commands"),
-            ("Broker Radar", "brokers"),
-            ("Local Watchdog", "watchdog"),
-            ("Monitor Changes", "changes"),
-            ("Compliance Tracker", "tracker"),
-            ("Form Queue", "forms"),
-            ("Custom Removals", "custom"),
-            ("Run Log", "log"),
-        ):
+        self._build_home_page()
+        self._build_cleanup_page()
+        self._build_watchdog_page()
+        self._build_removals_page()
+        self._build_advanced_page()
+
+    def _build_topbar(self) -> None:
+        top = tk.Frame(self.shell, bg=COLORS["surface"], height=72, highlightbackground=COLORS["line"], highlightthickness=1)
+        top.grid(row=0, column=0, columnspan=2, sticky="ew")
+        top.grid_propagate(False)
+        top.rowconfigure(0, weight=1)
+        top.columnconfigure(1, weight=1)
+
+        brand = tk.Frame(top, bg=COLORS["surface"])
+        brand.grid(row=0, column=0, sticky="w", padx=24)
+        if self.logo_image:
+            tk.Label(brand, image=self.logo_image, bg=COLORS["surface"]).pack(side="left", padx=(0, 10))
+        tk.Label(brand, text="Supargus", bg=COLORS["surface"], fg=COLORS["navy"], font=("Segoe UI", 18, "bold")).pack(side="left")
+
+        status = tk.Frame(top, bg=COLORS["surface"])
+        status.grid(row=0, column=2, sticky="e", padx=24)
+        tk.Label(status, text="Local-first / Review before send", bg=COLORS["surface"], fg=COLORS["blue"], font=("Segoe UI", 9, "bold")).pack(anchor="e")
+        tk.Label(status, text="Status", bg=COLORS["surface"], fg=COLORS["muted"], font=("Segoe UI", 9, "bold")).pack(anchor="e")
+        tk.Label(status, textvariable=self.status_var, bg=COLORS["surface"], fg=COLORS["ink"], font=("Segoe UI", 10)).pack(anchor="e")
+
+    def _build_sidebar(self) -> None:
+        side = tk.Frame(self.shell, bg=COLORS["nav"], width=104, highlightbackground=COLORS["line"], highlightthickness=1)
+        side.grid(row=1, column=0, sticky="nsw")
+        side.grid_propagate(False)
+
+        items = (
+            ("home", "Dashboard"),
+            ("cleanup", "Cleanup"),
+            ("watchdog", "This PC"),
+            ("removals", "Removals"),
+            ("advanced", "Advanced"),
+        )
+        for key, label in items:
             button = tk.Button(
-                nav,
+                side,
                 text=label,
-                anchor="w",
-                command=lambda name=tab: self._select_tab(name),
-                bg="#102027",
-                fg="#d7e7eb",
-                activebackground="#17333c",
-                activeforeground="#ffffff",
+                command=lambda value=key: self.show_page(value),
+                bg=COLORS["nav"],
+                fg=COLORS["muted"],
+                activebackground=COLORS["yellow_soft"],
+                activeforeground=COLORS["blue"],
                 relief="flat",
                 bd=0,
-                padx=12,
-                pady=9,
-                font=("Segoe UI", 10),
+                padx=8,
+                pady=14,
+                cursor="hand2",
+                font=("Segoe UI", 9, "bold"),
             )
-            button.pack(fill="x", pady=2)
+            button.pack(fill="x", padx=8, pady=(10 if key == "home" else 2, 0))
+            self.nav_buttons[key] = button
 
-        note = tk.Label(
-            sidebar,
-            text="Runs locally as a desktop app. No browser tab required. Cloud AI remains optional.",
-            bg="#102027",
-            fg="#bdd3d8",
-            wraplength=198,
-            justify="left",
-            font=("Segoe UI", 9),
+    def _page(self, key: str) -> "tk.Frame":
+        page = tk.Frame(self.content, bg=COLORS["bg"])
+        page.grid(row=0, column=0, sticky="nsew")
+        page.columnconfigure(0, weight=1)
+        page.rowconfigure(0, weight=1)
+        self.pages[key] = page
+        return page
+
+    def show_page(self, key: str) -> None:
+        self.pages[key].tkraise()
+        for name, button in self.nav_buttons.items():
+            selected = name == key
+            button.configure(bg=COLORS["yellow_soft"] if selected else COLORS["nav"], fg=COLORS["blue"] if selected else COLORS["muted"])
+
+    def _card(self, parent: "tk.Widget", row: int, column: int, *, columnspan: int = 1, rowspan: int = 1, padx=(0, 14), pady=(0, 14)) -> "tk.Frame":
+        frame = tk.Frame(parent, bg=COLORS["surface"], highlightbackground=COLORS["line"], highlightthickness=1)
+        frame.grid(row=row, column=column, columnspan=columnspan, rowspan=rowspan, sticky="nsew", padx=padx, pady=pady)
+        return frame
+
+    def _button(self, parent: "tk.Widget", text: str, command, *, primary: bool = False, danger: bool = False) -> "tk.Button":
+        if primary:
+            bg, fg, active = COLORS["blue"], "#ffffff", COLORS["blue_dark"]
+        elif danger:
+            bg, fg, active = COLORS["red"], "#ffffff", "#8f1d14"
+        else:
+            bg, fg, active = COLORS["soft"], COLORS["ink"], "#e2e8f0"
+        button = tk.Button(
+            parent,
+            text=text,
+            command=command,
+            bg=bg,
+            fg=fg,
+            activebackground=active,
+            activeforeground=fg,
+            relief="flat",
+            bd=0,
+            padx=18,
+            pady=9,
+            cursor="hand2",
+            font=("Segoe UI", 10, "bold"),
         )
-        note.grid(row=2, column=0, sticky="ew", padx=22, pady=(12, 0))
+        return button
 
-        main = ttk.Frame(shell)
-        main.grid(row=0, column=1, sticky="nsew", padx=24, pady=22)
-        main.columnconfigure(0, weight=1)
-        main.rowconfigure(2, weight=1)
+    def _build_home_page(self) -> None:
+        page = self._page("home")
+        page.columnconfigure(0, weight=2)
+        page.columnconfigure(1, weight=1)
+        page.rowconfigure(1, weight=1)
 
-        header = ttk.Frame(main)
-        header.grid(row=0, column=0, sticky="ew")
-        header.columnconfigure(0, weight=1)
-        ttk.Label(header, text="Command your privacy cleanup.", style="Title.TLabel").grid(row=0, column=0, sticky="w")
-        ttk.Label(
+        header = tk.Frame(page, bg=COLORS["bg"])
+        header.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 18))
+        tk.Label(header, text="Your privacy, in plain English.", bg=COLORS["bg"], fg=COLORS["ink"], font=("Segoe UI", 25, "bold")).pack(anchor="w")
+        tk.Label(
             header,
-            text="Scan brokers, prepare takedowns, monitor reappearances, and keep the receipts from one native window.",
-            style="Subtitle.TLabel",
-        ).grid(row=1, column=0, sticky="w", pady=(2, 0))
-        ttk.Label(header, textvariable=self.status_var, style="Subtitle.TLabel").grid(row=0, column=1, sticky="e")
+            text="Scan data brokers, prepare removals, and check this PC without handing your identity to another service.",
+            bg=COLORS["bg"],
+            fg=COLORS["muted"],
+            font=("Segoe UI", 11),
+        ).pack(anchor="w", pady=(4, 0))
 
-        self._build_metrics(main)
-        self._build_notebook(main)
+        left = tk.Frame(page, bg=COLORS["bg"])
+        left.grid(row=1, column=0, sticky="nsew")
+        left.columnconfigure(0, weight=1)
+        left.columnconfigure(1, weight=1)
+        left.rowconfigure(2, weight=1)
 
-    def _build_metrics(self, parent: "ttk.Frame") -> None:
-        metrics = ttk.Frame(parent)
-        metrics.grid(row=1, column=0, sticky="ew", pady=(18, 16))
-        for idx in range(6):
-            metrics.columnconfigure(idx, weight=1, uniform="metric")
-        for idx, (key, label) in enumerate(
-            (
-                ("brokers", "Brokers checked"),
-                ("matches", "Possible matches"),
-                ("watchdog", "Watchdog findings"),
-                ("changes", "Scan changes"),
-                ("requests", "Draft requests"),
-                ("bundle", "Bundle size"),
-            )
+        score_card = self._card(left, 0, 0, columnspan=2, padx=(0, 14))
+        score_card.columnconfigure(0, weight=1)
+        score_card.columnconfigure(1, weight=1)
+        tk.Label(score_card, text="Privacy score", bg=COLORS["surface"], fg=COLORS["muted"], font=("Segoe UI", 10, "bold")).grid(row=0, column=0, sticky="w", padx=24, pady=(20, 0))
+        tk.Label(score_card, textvariable=self.metric_vars["score"], bg=COLORS["surface"], fg=COLORS["ink"], font=("Segoe UI", 50, "bold")).grid(row=1, column=0, sticky="w", padx=24)
+        self.score_label_widget = tk.Label(score_card, textvariable=self.metric_vars["score_label"], bg=COLORS["surface"], fg=COLORS["green"], font=("Segoe UI", 16, "bold"))
+        self.score_label_widget.grid(row=2, column=0, sticky="w", padx=24, pady=(0, 20))
+        self.score_canvas = tk.Canvas(score_card, width=250, height=150, bg=COLORS["surface"], highlightthickness=0)
+        self.score_canvas.grid(row=0, column=1, rowspan=3, sticky="e", padx=24, pady=18)
+
+        self._home_action(left, 1, 0, "Scan exposure", "Check data brokers and people-search sites.", "broker_scan", "Scan now", primary=True)
+        self._home_action(left, 1, 1, "Prepare removals", "Create request drafts you can inspect.", "prepare_requests", "Prepare")
+        self._home_action(left, 2, 0, "Scan this PC", "Find proxy and bandwidth-sharing signals.", "watchdog", "Scan PC")
+        self._home_action(left, 2, 1, "Export receipts", "Bundle reports, drafts, and hashes.", "bundle", "Export")
+
+        advisor = self._card(page, 1, 1, padx=(0, 0))
+        advisor.columnconfigure(0, weight=1)
+        tk.Label(advisor, text="Trusted advisor", bg=COLORS["surface"], fg=COLORS["muted"], font=("Segoe UI", 10, "bold")).pack(anchor="w", padx=22, pady=(20, 4))
+        self.next_step_title = tk.Label(advisor, text="Run a privacy check", bg=COLORS["surface"], fg=COLORS["ink"], font=("Segoe UI", 16, "bold"), wraplength=270, justify="left")
+        self.next_step_title.pack(anchor="w", padx=22)
+        self.next_step_body = tk.Label(advisor, text="", bg=COLORS["surface"], fg=COLORS["muted"], font=("Segoe UI", 10), wraplength=280, justify="left")
+        self.next_step_body.pack(anchor="w", padx=22, pady=(8, 18))
+        workflow_button = self._button(advisor, "Run full privacy check", lambda: self.run_action("workflow"), primary=True)
+        workflow_button.pack(anchor="w", padx=22, pady=(0, 16))
+        self.buttons.append(workflow_button)
+
+        metrics = tk.Frame(advisor, bg=COLORS["surface"])
+        metrics.pack(fill="x", padx=22, pady=(4, 20))
+        for label, var in (
+            ("Possible matches", self.metric_vars["matches"]),
+            ("Watchdog findings", self.metric_vars["watchdog"]),
+            ("Draft requests", self.metric_vars["requests"]),
+            ("Evidence bundle", self.metric_vars["bundle"]),
         ):
-            card = ttk.Frame(metrics, style="Panel.TFrame", padding=(14, 12))
-            card.grid(row=0, column=idx, sticky="nsew", padx=(0 if idx == 0 else 8, 0))
-            ttk.Label(card, text=label, style="MetricLabel.TLabel").pack(anchor="w")
-            ttk.Label(card, textvariable=self.metric_vars[key], style="MetricValue.TLabel").pack(anchor="w", pady=(5, 0))
+            row = tk.Frame(metrics, bg=COLORS["surface"])
+            row.pack(fill="x", pady=6)
+            tk.Label(row, text=label, bg=COLORS["surface"], fg=COLORS["muted"], font=("Segoe UI", 10)).pack(side="left")
+            tk.Label(row, textvariable=var, bg=COLORS["surface"], fg=COLORS["ink"], font=("Segoe UI", 10, "bold")).pack(side="right")
 
-    def _build_notebook(self, parent: "ttk.Frame") -> None:
-        self.notebook = ttk.Notebook(parent)
-        self.notebook.grid(row=2, column=0, sticky="nsew")
+    def _home_action(self, parent: "tk.Widget", row: int, column: int, title: str, body: str, action: str, button_text: str, *, primary: bool = False) -> None:
+        card = self._card(parent, row, column)
+        tk.Label(card, text=title, bg=COLORS["surface"], fg=COLORS["ink"], font=("Segoe UI", 14, "bold")).pack(anchor="w", padx=20, pady=(18, 3))
+        tk.Label(card, text=body, bg=COLORS["surface"], fg=COLORS["muted"], font=("Segoe UI", 10), wraplength=300, justify="left").pack(anchor="w", padx=20)
+        button = self._button(card, button_text, lambda: self.run_action(action), primary=primary)
+        button.pack(anchor="w", padx=20, pady=18)
+        self.buttons.append(button)
 
-        self.commands_tab = ttk.Frame(self.notebook, padding=16)
-        self.brokers_tab = ttk.Frame(self.notebook, padding=16)
-        self.watchdog_tab = ttk.Frame(self.notebook, padding=16)
-        self.changes_tab = ttk.Frame(self.notebook, padding=16)
-        self.tracker_tab = ttk.Frame(self.notebook, padding=16)
-        self.forms_tab = ttk.Frame(self.notebook, padding=16)
-        self.custom_tab = ttk.Frame(self.notebook, padding=16)
-        self.log_tab = ttk.Frame(self.notebook, padding=16)
+    def _build_cleanup_page(self) -> None:
+        page = self._page("cleanup")
+        page.columnconfigure(0, weight=1)
+        page.rowconfigure(2, weight=1)
+        self._section_header(page, "Data broker cleanup", "See likely exposure, then create removal drafts you can review.")
 
-        for tab, label in (
-            (self.commands_tab, "Command Center"),
-            (self.brokers_tab, "Broker Radar"),
-            (self.watchdog_tab, "Local Watchdog"),
-            (self.changes_tab, "Monitor Changes"),
-            (self.tracker_tab, "Compliance Tracker"),
-            (self.forms_tab, "Form Queue"),
-            (self.custom_tab, "Custom Removals"),
-            (self.log_tab, "Run Log"),
+        actions = tk.Frame(page, bg=COLORS["bg"])
+        actions.grid(row=1, column=0, sticky="ew", pady=(0, 12))
+        for text, action, primary in (
+            ("Scan brokers", "broker_scan", True),
+            ("Prepare removals", "prepare_requests", False),
+            ("Build form queue", "form_queue", False),
+            ("Preview emails", "mail_preview", False),
         ):
-            self.notebook.add(tab, text=label)
+            button = self._button(actions, text, lambda value=action: self.run_action(value), primary=primary)
+            button.pack(side="left", padx=(0, 10))
+            self.buttons.append(button)
 
-        self._build_command_tab()
-        self.broker_tree = self._tree(self.brokers_tab, ("broker", "status", "confidence", "score", "url"))
-        self.watchdog_text = self._text_panel(self.watchdog_tab)
-        self.change_tree = self._tree(self.changes_tab, ("broker", "change", "previous", "current", "detail"))
-        self.tracker_tree = self._tree(self.tracker_tab, ("broker", "status", "delivery", "updated"))
-        self._build_forms_tab()
-        self._build_custom_tab()
-        self.log_text = self._text_panel(self.log_tab)
-        self._log("Supargus desktop is ready.")
+        table_card = self._card(page, 2, 0, padx=(0, 0))
+        table_card.rowconfigure(0, weight=1)
+        table_card.columnconfigure(0, weight=1)
+        self.broker_tree = self._tree(table_card, ("broker", "status", "confidence", "score", "url"))
 
-    def _build_command_tab(self) -> None:
-        self.commands_tab.columnconfigure(0, weight=1)
-        self.commands_tab.columnconfigure(1, weight=1)
+    def _build_watchdog_page(self) -> None:
+        page = self._page("watchdog")
+        page.columnconfigure(0, weight=1)
+        page.rowconfigure(2, weight=1)
+        self._section_header(page, "This PC", "Look for local proxy, extension, startup, and bandwidth-sharing risks.")
 
-        setup = ttk.Frame(self.commands_tab, style="Panel.TFrame", padding=16)
-        setup.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 14))
+        top = tk.Frame(page, bg=COLORS["bg"])
+        top.grid(row=1, column=0, sticky="ew", pady=(0, 12))
+        button = self._button(top, "Scan this PC", lambda: self.run_action("watchdog"), primary=True)
+        button.pack(side="left")
+        self.buttons.append(button)
+        tk.Label(top, text="No action is taken automatically. Findings are review-only.", bg=COLORS["bg"], fg=COLORS["muted"], font=("Segoe UI", 10)).pack(side="left", padx=14)
+
+        card = self._card(page, 2, 0, padx=(0, 0))
+        card.rowconfigure(0, weight=1)
+        card.columnconfigure(0, weight=1)
+        self.watchdog_text = self._text_panel(card, dark=False)
+
+    def _build_removals_page(self) -> None:
+        page = self._page("removals")
+        page.columnconfigure(0, weight=1)
+        page.columnconfigure(1, weight=1)
+        page.rowconfigure(2, weight=1)
+        self._section_header(page, "Removal workbench", "Review form tasks and add custom removal targets that are outside the broker registry.")
+
+        self._build_forms_panel(page)
+        self._build_custom_panel(page)
+
+    def _build_forms_panel(self, page: "tk.Frame") -> None:
+        card = self._card(page, 1, 0, rowspan=2)
+        card.columnconfigure(0, weight=1)
+        card.rowconfigure(2, weight=1)
+        tk.Label(card, text="Manual form queue", bg=COLORS["surface"], fg=COLORS["ink"], font=("Segoe UI", 14, "bold")).grid(row=0, column=0, sticky="w", padx=18, pady=(16, 0))
+        controls = tk.Frame(card, bg=COLORS["surface"])
+        controls.grid(row=1, column=0, sticky="ew", padx=18, pady=12)
+        for text, command, primary in (
+            ("Open form", self._open_selected_form, True),
+            ("Copy request", self._copy_selected_form, False),
+            ("Mark submitted", self._mark_selected_form_submitted, False),
+        ):
+            self._button(controls, text, command, primary=primary).pack(side="left", padx=(0, 8))
+        body = tk.Frame(card, bg=COLORS["surface"])
+        body.grid(row=2, column=0, sticky="nsew", padx=18, pady=(0, 18))
+        body.columnconfigure(0, weight=1)
+        body.rowconfigure(0, weight=1)
+        self.forms_tree = self._tree(body, ("broker", "status", "url"))
+
+    def _build_custom_panel(self, page: "tk.Frame") -> None:
+        card = self._card(page, 1, 1, rowspan=2, padx=(0, 0))
+        card.columnconfigure(0, weight=1)
+        card.rowconfigure(4, weight=1)
+        tk.Label(card, text="Custom removals", bg=COLORS["surface"], fg=COLORS["ink"], font=("Segoe UI", 14, "bold")).grid(row=0, column=0, sticky="w", padx=18, pady=(16, 8))
+
+        form = tk.Frame(card, bg=COLORS["surface"])
+        form.grid(row=1, column=0, sticky="ew", padx=18)
+        form.columnconfigure(1, weight=1)
+        tk.Label(form, text="URL", bg=COLORS["surface"], fg=COLORS["muted"], font=("Segoe UI", 9, "bold")).grid(row=0, column=0, sticky="w", pady=4)
+        tk.Entry(form, textvariable=self.custom_url_var, relief="solid", bd=1, font=("Segoe UI", 10)).grid(row=0, column=1, sticky="ew", padx=(8, 0), ipady=6)
+        tk.Label(form, text="Reason", bg=COLORS["surface"], fg=COLORS["muted"], font=("Segoe UI", 9, "bold")).grid(row=1, column=0, sticky="w", pady=4)
+        tk.Entry(form, textvariable=self.custom_reason_var, relief="solid", bd=1, font=("Segoe UI", 10)).grid(row=1, column=1, sticky="ew", padx=(8, 0), ipady=6)
+
+        controls = tk.Frame(card, bg=COLORS["surface"])
+        controls.grid(row=2, column=0, sticky="ew", padx=18, pady=12)
+        self._button(controls, "Add URL", self._add_custom_target, primary=True).pack(side="left", padx=(0, 8))
+        self._button(controls, "Prepare drafts", self._prepare_custom_drafts).pack(side="left", padx=(0, 8))
+        self._button(controls, "Mark submitted", self._mark_custom_submitted).pack(side="left")
+
+        body = tk.Frame(card, bg=COLORS["surface"])
+        body.grid(row=4, column=0, sticky="nsew", padx=18, pady=(0, 18))
+        body.columnconfigure(0, weight=1)
+        body.rowconfigure(0, weight=1)
+        self.custom_tree = self._tree(body, ("status", "domain", "url"))
+
+    def _build_advanced_page(self) -> None:
+        page = self._page("advanced")
+        page.columnconfigure(0, weight=1)
+        page.columnconfigure(1, weight=1)
+        page.rowconfigure(2, weight=1)
+        self._section_header(page, "Advanced tools", "Power-user controls are here when you need them.")
+
+        setup = self._card(page, 1, 0)
         setup.columnconfigure(1, weight=1)
-        ttk.Label(setup, text="Local Workspace", style="PanelTitle.TLabel").grid(row=0, column=0, columnspan=3, sticky="w")
+        tk.Label(setup, text="Local setup", bg=COLORS["surface"], fg=COLORS["ink"], font=("Segoe UI", 14, "bold")).grid(row=0, column=0, columnspan=3, sticky="w", padx=18, pady=(16, 0))
         self._field(setup, 1, "Workspace", self.workspace_var, self._choose_workspace)
         self._field(setup, 2, "Identity", self.identity_var, self._choose_identity)
         self._field(setup, 3, "Config", self.config_var, None)
-        self._field(setup, 4, "Gmail / SMTP config", self.smtp_var, None)
+        self._field(setup, 4, "Gmail / SMTP", self.smtp_var, None)
         self._field(setup, 5, "Limit", self.limit_var, None)
+        self._button(setup, "Create sample identity", self._create_sample_identity).grid(row=6, column=0, padx=18, pady=16, sticky="w")
+        self._button(setup, "Open workspace folder", self._open_workspace).grid(row=6, column=1, padx=8, pady=16, sticky="w")
 
-        quick = ttk.Frame(setup, style="Panel.TFrame")
-        quick.grid(row=6, column=0, columnspan=3, sticky="ew", pady=(12, 0))
-        ttk.Button(quick, text="Create Sample Identity", style="Ghost.TButton", command=self._create_sample_identity).pack(side="left")
-        ttk.Button(quick, text="Refresh Results", style="Ghost.TButton", command=self.refresh).pack(side="left", padx=8)
-        ttk.Button(quick, text="Open Workspace Folder", style="Ghost.TButton", command=self._open_workspace).pack(side="left")
-
-        for idx, (action, title, detail) in enumerate(DESKTOP_ACTIONS):
-            card = ttk.Frame(self.commands_tab, style="Panel.TFrame", padding=16)
-            card.grid(row=1 + idx // 2, column=idx % 2, sticky="nsew", padx=(0 if idx % 2 == 0 else 10, 0), pady=8)
-            card.columnconfigure(0, weight=1)
-            ttk.Label(card, text=title, style="PanelTitle.TLabel").grid(row=0, column=0, sticky="w")
-            ttk.Label(card, text=detail, style="Muted.TLabel", wraplength=360).grid(row=1, column=0, sticky="w", pady=(4, 10))
-            button = ttk.Button(card, text="Run", style="Primary.TButton", command=lambda value=action: self.run_action(value))
-            button.grid(row=2, column=0, sticky="w")
+        tools = self._card(page, 1, 1, padx=(0, 0))
+        tools.columnconfigure(0, weight=1)
+        tk.Label(tools, text="Command actions", bg=COLORS["surface"], fg=COLORS["ink"], font=("Segoe UI", 14, "bold")).pack(anchor="w", padx=18, pady=(16, 8))
+        for action, title, detail in DESKTOP_ACTIONS:
+            row = tk.Frame(tools, bg=COLORS["surface"])
+            row.pack(fill="x", padx=18, pady=5)
+            tk.Label(row, text=title, bg=COLORS["surface"], fg=COLORS["ink"], font=("Segoe UI", 10, "bold")).pack(side="left")
+            button = self._button(row, "Run", lambda value=action: self.run_action(value))
+            button.pack(side="right")
             self.buttons.append(button)
 
-    def _build_forms_tab(self) -> None:
-        self.forms_tab.columnconfigure(0, weight=1)
-        self.forms_tab.columnconfigure(1, weight=1)
-        self.forms_tab.rowconfigure(1, weight=1)
+        log_card = self._card(page, 2, 0, columnspan=2, padx=(0, 0), pady=(0, 0))
+        log_card.rowconfigure(0, weight=1)
+        log_card.columnconfigure(0, weight=1)
+        self.log_text = self._text_panel(log_card, dark=True)
 
-        controls = ttk.Frame(self.forms_tab)
-        controls.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 12))
-        ttk.Button(controls, text="Open Form", style="Primary.TButton", command=self._open_selected_form).pack(side="left")
-        ttk.Button(controls, text="Copy Request", style="Ghost.TButton", command=self._copy_selected_form).pack(side="left", padx=8)
-        ttk.Button(controls, text="Mark Submitted", style="Ghost.TButton", command=self._mark_selected_form_submitted).pack(side="left")
-        ttk.Button(controls, text="Refresh", style="Ghost.TButton", command=self.refresh).pack(side="left", padx=8)
+    def _section_header(self, parent: "tk.Frame", title: str, body: str) -> None:
+        header = tk.Frame(parent, bg=COLORS["bg"])
+        header.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 18))
+        tk.Label(header, text=title, bg=COLORS["bg"], fg=COLORS["ink"], font=("Segoe UI", 23, "bold")).pack(anchor="w")
+        tk.Label(header, text=body, bg=COLORS["bg"], fg=COLORS["muted"], font=("Segoe UI", 11)).pack(anchor="w", pady=(4, 0))
 
-        table_frame = ttk.Frame(self.forms_tab)
-        table_frame.grid(row=1, column=0, sticky="nsew", padx=(0, 10))
-        table_frame.columnconfigure(0, weight=1)
-        table_frame.rowconfigure(0, weight=1)
-        self.forms_tree = ttk.Treeview(table_frame, columns=("broker", "status", "url"), show="headings")
-        for column, width in (("broker", 180), ("status", 120), ("url", 300)):
-            self.forms_tree.heading(column, text=column.title())
-            self.forms_tree.column(column, width=width, anchor="w")
-        ybar = ttk.Scrollbar(table_frame, orient="vertical", command=self.forms_tree.yview)
-        self.forms_tree.configure(yscrollcommand=ybar.set)
-        self.forms_tree.grid(row=0, column=0, sticky="nsew")
-        ybar.grid(row=0, column=1, sticky="ns")
-        self.forms_tree.bind("<<TreeviewSelect>>", lambda _event: self._show_selected_form())
-
-        detail_frame = ttk.Frame(self.forms_tab)
-        detail_frame.grid(row=1, column=1, sticky="nsew")
-        detail_frame.columnconfigure(0, weight=1)
-        detail_frame.rowconfigure(1, weight=1)
-        ttk.Label(detail_frame, text="Selected Form Task", style="PanelTitle.TLabel").grid(row=0, column=0, sticky="w", pady=(0, 8))
-        detail_body = ttk.Frame(detail_frame)
-        detail_body.grid(row=1, column=0, sticky="nsew")
-        detail_body.columnconfigure(0, weight=1)
-        detail_body.rowconfigure(0, weight=1)
-        self.forms_text = self._text_panel(detail_body)
-
-    def _build_custom_tab(self) -> None:
-        self.custom_targets = []
-        self.custom_tab.columnconfigure(0, weight=1)
-        self.custom_tab.columnconfigure(1, weight=1)
-        self.custom_tab.rowconfigure(2, weight=1)
-
-        editor = ttk.Frame(self.custom_tab, style="Panel.TFrame", padding=14)
-        editor.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 12))
-        editor.columnconfigure(1, weight=1)
-        ttk.Label(editor, text="Add Custom Removal Target", style="PanelTitle.TLabel").grid(row=0, column=0, columnspan=3, sticky="w")
-        ttk.Label(editor, text="URL", style="Muted.TLabel").grid(row=1, column=0, sticky="w", pady=(10, 0))
-        ttk.Entry(editor, textvariable=self.custom_url_var).grid(row=1, column=1, sticky="ew", padx=10, pady=(10, 0))
-        ttk.Label(editor, text="Reason", style="Muted.TLabel").grid(row=2, column=0, sticky="w", pady=(8, 0))
-        ttk.Entry(editor, textvariable=self.custom_reason_var).grid(row=2, column=1, sticky="ew", padx=10, pady=(8, 0))
-        ttk.Button(editor, text="Add URL", style="Primary.TButton", command=self._add_custom_target).grid(row=1, column=2, sticky="e", pady=(10, 0))
-        ttk.Button(editor, text="Prepare Drafts", style="Ghost.TButton", command=self._prepare_custom_drafts).grid(row=2, column=2, sticky="e", pady=(8, 0))
-
-        controls = ttk.Frame(self.custom_tab)
-        controls.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(0, 12))
-        ttk.Button(controls, text="Mark Submitted", style="Ghost.TButton", command=self._mark_custom_submitted).pack(side="left")
-        ttk.Button(controls, text="Refresh", style="Ghost.TButton", command=self.refresh).pack(side="left", padx=8)
-
-        table_frame = ttk.Frame(self.custom_tab)
-        table_frame.grid(row=2, column=0, sticky="nsew", padx=(0, 10))
-        table_frame.columnconfigure(0, weight=1)
-        table_frame.rowconfigure(0, weight=1)
-        self.custom_tree = ttk.Treeview(table_frame, columns=("id", "status", "domain", "url"), show="headings")
-        for column, width in (("id", 120), ("status", 120), ("domain", 180), ("url", 360)):
-            self.custom_tree.heading(column, text=column.title())
-            self.custom_tree.column(column, width=width, anchor="w")
-        ybar = ttk.Scrollbar(table_frame, orient="vertical", command=self.custom_tree.yview)
-        self.custom_tree.configure(yscrollcommand=ybar.set)
-        self.custom_tree.grid(row=0, column=0, sticky="nsew")
-        ybar.grid(row=0, column=1, sticky="ns")
-
-        detail_frame = ttk.Frame(self.custom_tab)
-        detail_frame.grid(row=2, column=1, sticky="nsew")
-        detail_frame.columnconfigure(0, weight=1)
-        detail_frame.rowconfigure(1, weight=1)
-        ttk.Label(detail_frame, text="Selected Target", style="PanelTitle.TLabel").grid(row=0, column=0, sticky="w", pady=(0, 8))
-        detail_body = ttk.Frame(detail_frame)
-        detail_body.grid(row=1, column=0, sticky="nsew")
-        detail_body.columnconfigure(0, weight=1)
-        detail_body.rowconfigure(0, weight=1)
-        self.custom_text = self._text_panel(detail_body)
-        self.custom_tree.bind("<<TreeviewSelect>>", lambda _event: self._show_selected_custom())
-
-    def _field(self, parent: "ttk.Frame", row: int, label: str, variable: "tk.StringVar", browse: Any) -> None:
-        ttk.Label(parent, text=label, style="Muted.TLabel").grid(row=row, column=0, sticky="w", pady=(10, 0))
-        ttk.Entry(parent, textvariable=variable).grid(row=row, column=1, sticky="ew", padx=10, pady=(10, 0))
+    def _field(self, parent: "tk.Widget", row: int, label: str, variable: "tk.StringVar", browse: Any) -> None:
+        tk.Label(parent, text=label, bg=COLORS["surface"], fg=COLORS["muted"], font=("Segoe UI", 9, "bold")).grid(row=row, column=0, sticky="w", padx=18, pady=(12, 0))
+        tk.Entry(parent, textvariable=variable, relief="solid", bd=1, font=("Segoe UI", 10)).grid(row=row, column=1, sticky="ew", padx=10, pady=(12, 0), ipady=5)
         if browse:
-            ttk.Button(parent, text="Browse", style="Ghost.TButton", command=browse).grid(row=row, column=2, sticky="e", pady=(10, 0))
+            self._button(parent, "Browse", browse).grid(row=row, column=2, sticky="e", padx=(0, 18), pady=(12, 0))
 
-    def _tree(self, parent: "ttk.Frame", columns: tuple[str, ...]) -> "ttk.Treeview":
-        parent.columnconfigure(0, weight=1)
-        parent.rowconfigure(0, weight=1)
+    def _tree(self, parent: "tk.Widget", columns: tuple[str, ...]) -> "ttk.Treeview":
         tree = ttk.Treeview(parent, columns=columns, show="headings")
         for column in columns:
             tree.heading(column, text=column.replace("_", " ").title())
@@ -381,40 +509,21 @@ class SupargusDesktop:
         tree.configure(yscrollcommand=ybar.set)
         tree.grid(row=0, column=0, sticky="nsew")
         ybar.grid(row=0, column=1, sticky="ns")
+        if columns and columns[0] in {"broker", "status"}:
+            tree.bind("<<TreeviewSelect>>", lambda _event: self._show_selected_records())
         return tree
 
-    def _text_panel(self, parent: "ttk.Frame") -> "tk.Text":
+    def _text_panel(self, parent: "tk.Widget", *, dark: bool) -> "tk.Text":
         parent.columnconfigure(0, weight=1)
         parent.rowconfigure(0, weight=1)
-        text = tk.Text(
-            parent,
-            bg="#071316",
-            fg="#d7f5ec",
-            insertbackground="#d7f5ec",
-            relief="flat",
-            padx=14,
-            pady=12,
-            wrap="word",
-            font=("Consolas", 10),
-        )
+        bg = COLORS["navy"] if dark else COLORS["surface_alt"]
+        fg = "#d7f5ec" if dark else COLORS["ink"]
+        text = tk.Text(parent, bg=bg, fg=fg, insertbackground=fg, relief="flat", padx=14, pady=12, wrap="word", font=("Consolas", 10))
         ybar = ttk.Scrollbar(parent, orient="vertical", command=text.yview)
         text.configure(yscrollcommand=ybar.set)
         text.grid(row=0, column=0, sticky="nsew")
         ybar.grid(row=0, column=1, sticky="ns")
         return text
-
-    def _select_tab(self, key: str) -> None:
-        mapping = {
-            "commands": self.commands_tab,
-            "brokers": self.brokers_tab,
-            "watchdog": self.watchdog_tab,
-            "changes": self.changes_tab,
-            "tracker": self.tracker_tab,
-            "forms": self.forms_tab,
-            "custom": self.custom_tab,
-            "log": self.log_tab,
-        }
-        self.notebook.select(mapping[key])
 
     def _payload(self, action: str) -> dict[str, Any]:
         try:
@@ -453,78 +562,82 @@ class SupargusDesktop:
         threading.Thread(target=worker, daemon=True).start()
 
     def refresh(self) -> None:
-        state = build_state(self.workspace_var.get())
-        summary = state["summary"]
+        self.state = build_state(self.workspace_var.get())
+        summary = self.state["summary"]
+        score = _privacy_score(summary)
+        label, label_color = _score_label(score)
+
         self.metric_vars["brokers"].set(str(summary["brokers_checked"]))
         self.metric_vars["matches"].set(str(summary["possible_matches"]))
         self.metric_vars["watchdog"].set(str(summary["watchdog_findings"]))
         self.metric_vars["changes"].set(str(summary["scan_changes"]))
         self.metric_vars["requests"].set(str(summary["request_drafts"]))
         self.metric_vars["bundle"].set(_fmt_bytes(int(summary["bundle_size"])))
-        self._populate_brokers(state["matches"])
-        self._populate_watchdog(state["findings"])
-        self._populate_changes(state["changes"])
-        self._populate_tracker(state["tracker"])
-        self._populate_forms(state)
+        self.metric_vars["score"].set(str(score))
+        self.metric_vars["score_label"].set(label)
+        self.status_var.set(label)
+        self.score_label_widget.configure(fg=label_color)
+
+        self._draw_score(score, label_color)
+        self._set_next_step(summary)
+        self._populate_brokers(self.state["matches"])
+        self._populate_watchdog(self.state["findings"])
+        self._populate_tracker(self.state["tracker"])
+        self._populate_forms(self.state)
         self._populate_custom()
+
+    def _draw_score(self, score: int, color: str) -> None:
+        if not hasattr(self, "score_canvas"):
+            return
+        canvas = self.score_canvas
+        canvas.delete("all")
+        canvas.create_arc(28, 24, 222, 218, start=180, extent=-180, outline="#e5e7eb", width=18, style="arc")
+        canvas.create_arc(28, 24, 222, 218, start=180, extent=-max(4, int(180 * score / 100)), outline=color, width=18, style="arc")
+        canvas.create_text(125, 86, text=f"{score}", fill=COLORS["ink"], font=("Segoe UI", 33, "bold"))
+        canvas.create_text(125, 122, text="privacy score", fill=COLORS["muted"], font=("Segoe UI", 10, "bold"))
+
+    def _set_next_step(self, summary: dict[str, Any]) -> None:
+        matches = int(summary.get("possible_matches", 0) or 0)
+        requests = int(summary.get("request_drafts", 0) or 0)
+        findings = int(summary.get("watchdog_findings", 0) or 0)
+        if matches and not requests:
+            title = "Prepare removal drafts"
+            body = "Supargus found possible broker exposure. Create drafts first, then review before sending anything."
+        elif findings:
+            title = "Review this PC"
+            body = "The watchdog found local signals worth checking. These are review-only findings, not automatic accusations."
+        elif not summary.get("brokers_checked"):
+            title = "Run your first scan"
+            body = "Start with a local broker scan. Supargus will create evidence you can inspect before taking action."
+        else:
+            title = "Keep monitoring"
+            body = "You have a baseline. Re-scan later to catch reappearances and export receipts when you need them."
+        self.next_step_title.configure(text=title)
+        self.next_step_body.configure(text=body)
 
     def _populate_brokers(self, items: list[dict[str, Any]]) -> None:
         self._clear_tree(self.broker_tree)
+        if not items:
+            self.broker_tree.insert("", "end", values=("No broker scan yet", "Run Scan brokers", "", "", ""))
+            return
         for item in items:
-            self.broker_tree.insert(
-                "",
-                "end",
-                values=(
-                    item.get("broker_name", ""),
-                    item.get("status", ""),
-                    item.get("confidence", ""),
-                    item.get("score", ""),
-                    item.get("search_url", ""),
-                ),
-            )
+            self.broker_tree.insert("", "end", values=(item.get("broker_name", ""), item.get("status", ""), item.get("confidence", ""), item.get("score", ""), item.get("search_url", "")))
 
     def _populate_watchdog(self, items: list[dict[str, Any]]) -> None:
         self.watchdog_text.configure(state="normal")
         self.watchdog_text.delete("1.0", "end")
         if not items:
-            self.watchdog_text.insert("end", "No watchdog data yet. Run Watchdog Scan.")
+            self.watchdog_text.insert("end", "No watchdog data yet. Run Scan this PC.")
         for item in items:
-            self.watchdog_text.insert(
-                "end",
-                f"{item.get('severity', '').upper()}  {item.get('title', '')}\n"
-                f"{item.get('detail', '')}\n"
-                f"Evidence: {item.get('evidence', '')}\n\n",
-            )
+            self.watchdog_text.insert("end", f"{item.get('severity', '').upper()}  {item.get('title', '')}\n{item.get('detail', '')}\nEvidence: {item.get('evidence', '')}\n\n")
         self.watchdog_text.configure(state="disabled")
 
-    def _populate_changes(self, items: list[dict[str, Any]]) -> None:
-        self._clear_tree(self.change_tree)
-        for item in items:
-            self.change_tree.insert(
-                "",
-                "end",
-                values=(
-                    item.get("broker_name", ""),
-                    item.get("change_type", ""),
-                    item.get("previous_status", ""),
-                    item.get("current_status", ""),
-                    item.get("detail", ""),
-                ),
-            )
-
     def _populate_tracker(self, items: list[dict[str, Any]]) -> None:
+        if not hasattr(self, "tracker_tree"):
+            return
         self._clear_tree(self.tracker_tree)
         for item in items:
-            self.tracker_tree.insert(
-                "",
-                "end",
-                values=(
-                    item.get("broker_name", ""),
-                    item.get("status", ""),
-                    item.get("delivery", ""),
-                    item.get("updated_at", ""),
-                ),
-            )
+            self.tracker_tree.insert("", "end", values=(item.get("broker_name", ""), item.get("status", ""), item.get("delivery", ""), item.get("updated_at", "")))
 
     def _populate_forms(self, state: dict[str, Any]) -> None:
         forms_path = state["paths"].get("forms", "")
@@ -533,42 +646,41 @@ class SupargusDesktop:
         except Exception:
             self.form_tasks = []
         self._clear_tree(self.forms_tree)
+        if not self.form_tasks:
+            self.forms_tree.insert("", "end", iid="form-empty", values=("No form tasks yet", "Build form queue", ""))
+            return
         for idx, task in enumerate(self.form_tasks):
-            self.forms_tree.insert("", "end", iid=str(idx), values=(task.broker_name, task.status, task.opt_out_url))
-        if self.form_tasks:
-            first = "0"
-            self.forms_tree.selection_set(first)
-            self.forms_tree.focus(first)
-        self._show_selected_form()
+            self.forms_tree.insert("", "end", iid=f"form-{idx}", values=(task.broker_name, task.status, task.opt_out_url))
+
+    def _populate_custom(self) -> None:
+        try:
+            self.custom_targets = load_custom_targets(self._custom_queue_path())
+        except Exception:
+            self.custom_targets = []
+        self._clear_tree(self.custom_tree)
+        if not self.custom_targets:
+            self.custom_tree.insert("", "end", iid="custom-empty", values=("not started", "Add a URL", ""))
+            return
+        for idx, target in enumerate(self.custom_targets):
+            self.custom_tree.insert("", "end", iid=f"custom-{idx}", values=(target.status, target.domain, target.url))
+
+    def _show_selected_records(self) -> None:
+        return
 
     def _selected_form_task(self) -> FormTask | None:
         selected = self.forms_tree.selection()
         if not selected:
             return None
         try:
-            return self.form_tasks[int(selected[0])]
+            index = int(selected[0].split("-", 1)[1])
+            return self.form_tasks[index]
         except Exception:
             return None
-
-    def _show_selected_form(self) -> None:
-        task = self._selected_form_task()
-        self.forms_text.configure(state="normal")
-        self.forms_text.delete("1.0", "end")
-        if not task:
-            self.forms_text.insert("end", "No manual form tasks yet. Prepare requests, then build the form queue.")
-        else:
-            self.forms_text.insert(
-                "end",
-                f"{task.status.upper()}  {task.broker_name}\n"
-                f"Opt-out form: {task.opt_out_url}\n"
-                f"Profile: {task.profile_url}\n\n"
-                f"{task.request_body.strip()}\n",
-            )
-        self.forms_text.configure(state="disabled")
 
     def _open_selected_form(self) -> None:
         task = self._selected_form_task()
         if not task:
+            self._log("Select a form task first.")
             return
         webbrowser.open(task.opt_out_url)
         self._log(f"Opened opt-out form:\n{task.opt_out_url}")
@@ -576,21 +688,18 @@ class SupargusDesktop:
     def _copy_selected_form(self) -> None:
         task = self._selected_form_task()
         if not task:
+            self._log("Select a form task first.")
             return
-        text = (
-            f"Broker: {task.broker_name}\n"
-            f"Opt-out form: {task.opt_out_url}\n"
-            f"Profile: {task.profile_url}\n\n"
-            f"{task.request_body.strip()}\n"
-        )
+        text = f"Broker: {task.broker_name}\nOpt-out form: {task.opt_out_url}\nProfile: {task.profile_url}\n\n{task.request_body.strip()}\n"
         self.root.clipboard_clear()
         self.root.clipboard_append(text)
-        self.status_var.set("Copied form request to clipboard")
+        self.status_var.set("Copied request to clipboard")
         self._log(f"Copied request payload for {task.broker_name}.")
 
     def _mark_selected_form_submitted(self) -> None:
         task = self._selected_form_task()
         if not task:
+            self._log("Select a form task first.")
             return
         forms_path = Path(self.workspace_var.get()) / "forms" / "forms.json"
         try:
@@ -603,53 +712,19 @@ class SupargusDesktop:
     def _custom_queue_path(self) -> Path:
         return Path(self.workspace_var.get()) / "custom" / "custom.json"
 
-    def _populate_custom(self) -> None:
-        try:
-            self.custom_targets = load_custom_targets(self._custom_queue_path())
-        except Exception:
-            self.custom_targets = []
-        self._clear_tree(self.custom_tree)
-        for idx, target in enumerate(self.custom_targets):
-            self.custom_tree.insert("", "end", iid=str(idx), values=(target.id, target.status, target.domain, target.url))
-        if self.custom_targets:
-            first = "0"
-            self.custom_tree.selection_set(first)
-            self.custom_tree.focus(first)
-        self._show_selected_custom()
-
     def _selected_custom_target(self):
         selected = self.custom_tree.selection()
         if not selected:
             return None
         try:
-            return self.custom_targets[int(selected[0])]
+            index = int(selected[0].split("-", 1)[1])
+            return self.custom_targets[index]
         except Exception:
             return None
 
-    def _show_selected_custom(self) -> None:
-        target = self._selected_custom_target()
-        self.custom_text.configure(state="normal")
-        self.custom_text.delete("1.0", "end")
-        if not target:
-            self.custom_text.insert("end", "No custom removal targets yet. Add a URL above.")
-        else:
-            self.custom_text.insert(
-                "end",
-                f"{target.status.upper()}  {target.domain}\n"
-                f"ID: {target.id}\n"
-                f"URL: {target.url}\n"
-                f"Reason: {target.reason}\n"
-                f"Notes: {target.notes}\n",
-            )
-        self.custom_text.configure(state="disabled")
-
     def _add_custom_target(self) -> None:
         try:
-            target = add_custom_target(
-                self._custom_queue_path(),
-                self.custom_url_var.get(),
-                reason=self.custom_reason_var.get() or "custom_removal",
-            )
+            target = add_custom_target(self._custom_queue_path(), self.custom_url_var.get(), reason=self.custom_reason_var.get() or "custom_removal")
             self.custom_url_var.set("")
             self._log(f"Added custom removal target:\n{target.id} {target.url}")
             self.refresh()
@@ -673,6 +748,7 @@ class SupargusDesktop:
     def _mark_custom_submitted(self) -> None:
         target = self._selected_custom_target()
         if not target:
+            self._log("Select a custom target first.")
             return
         try:
             update_custom_status(self._custom_queue_path(), target.id, "submitted", notes="Submitted through desktop custom removals")
@@ -687,8 +763,12 @@ class SupargusDesktop:
 
     def _set_running(self, running: bool, status: str) -> None:
         self.status_var.set(status)
+        state = "disabled" if running else "normal"
         for button in self.buttons:
-            button.configure(state="disabled" if running else "normal")
+            try:
+                button.configure(state=state)
+            except tk.TclError:
+                pass
 
     def _drain_queue(self) -> None:
         while True:
@@ -709,6 +789,8 @@ class SupargusDesktop:
         self.root.after(100, self._drain_queue)
 
     def _log(self, text: str) -> None:
+        if not hasattr(self, "log_text"):
+            return
         self.log_text.configure(state="normal")
         self.log_text.insert("end", text.rstrip() + "\n\n")
         self.log_text.see("end")

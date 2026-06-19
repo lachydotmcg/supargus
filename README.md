@@ -1,20 +1,14 @@
+<p align="center">
+  <img src="logo.png" alt="Supargus logo" width="128">
+</p>
+
 # Supargus
 
-```text
-  ____  _   _ ____   _    ____   ____ _   _ ____
- / ___|| | | |  _ \ / \  |  _ \ / ___| | | / ___|
- \___ \| | | | |_) / _ \ | |_) | |  _| | | \___ \
-  ___) | |_| |  __/ ___ \|  _ <| |_| | |_| |___) |
- |____/ \___/|_| /_/   \_\_| \_\\____|\___/|____/
+Supargus is a free, open-source privacy removal app that runs from your own machine.
 
-        LOCAL REMOVAL OPS // BROKER RADAR // PROXY WATCHDOG
-```
+It is the "scan, review, remove, and keep receipts" workflow people expect from a consumer privacy service, but without uploading your identity profile to another middleman. You get a native desktop app, a CLI for power users, local identity storage, reviewed email sending, manual opt-out form queues, recurring scans, evidence bundles, and a watchdog for proxy or bandwidth-sharing software you may not know is installed.
 
-Supargus is a free, open-source, local-first privacy removal console.
-
-Think Incogni-style removal workflows, but run from your own machine: a native desktop app on your taskbar, a CLI for power users, local identity storage, reviewed email sending, manual opt-out form queues, recurring scans, evidence bundles, and a watchdog for proxy/bandwidth-sharing software you may not know is installed.
-
-No account. No subscription. No uploading your identity profile to another middleman.
+No account. No subscription. No silent sending.
 
 ## Why It Exists
 
@@ -37,18 +31,15 @@ Supargus takes the opposite stance:
 
 `supargus app` opens a real desktop application window, not a localhost browser tab.
 
-Current desktop views:
+The desktop flow is intentionally plain:
 
-- Command Center
-- Broker Radar
-- Local Watchdog
-- Monitor Changes
-- Compliance Tracker
-- Form Queue with open/copy/mark-submitted controls
-- Custom Removals
-- Run Log
+1. Dashboard: see your privacy score and the next recommended action.
+2. Cleanup: scan data brokers and prepare removal drafts.
+3. This PC: review local proxy, extension, startup, and bandwidth-sharing signals.
+4. Removals: handle manual opt-out forms and custom removal URLs.
+5. Advanced: use CLI-grade actions, paths, logs, and setup controls.
 
-From the app you can run broker scans, build takedown drafts, preview/send reviewed email requests through SMTP or Gmail app passwords, build manual opt-out form queues, import tracker records, generate follow-ups, export evidence bundles, and run the local watchdog.
+Everything is review-first. Email requests can be previewed before sending, form submissions stay manual, and evidence bundles are created locally.
 
 ## Quick Start
 
@@ -75,6 +66,12 @@ supargus app --workspace workspace
 ```
 
 On Windows installs, `supargus-app` is also exposed as a GUI launcher.
+
+To create Start Menu or desktop shortcuts:
+
+```powershell
+supargus shortcut install --workspace workspace
+```
 
 ## Core Capabilities
 

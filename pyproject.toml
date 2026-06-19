@@ -36,4 +36,4 @@ supargus-app = "supargus.desktop:run_desktop_app"
 where = ["src"]
 
 [tool.setuptools.package-data]
-supargus = ["data/*.json"]
+supargus = ["data/*.json", "assets/*.png"]
