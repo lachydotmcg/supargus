@@ -22,6 +22,9 @@ DEFAULT_BUNDLE_PATTERNS = [
     "requests/requests.json",
     "requests/*.txt",
     "forms/forms.json",
+    "custom/custom.json",
+    "custom/requests/requests.json",
+    "custom/requests/*.txt",
     "followups/requests.json",
     "followups/*.txt",
 ]

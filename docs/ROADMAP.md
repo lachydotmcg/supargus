@@ -22,6 +22,7 @@
 - [x] Windows-first watchdog scan
 - [x] expanded residential proxy and bandwidth-sharing watchdog checks
 - [x] 20+ high-signal broker detectors
+- [x] custom removal URL intake
 
 ## Phase 2: Native App
 
@@ -50,7 +51,6 @@
 - browser automation adapters
 - broker plugin system
 - jurisdiction-aware request packs
-- custom removal URL intake
 - family/household profiles
 - organization mode
 - MCP server mode

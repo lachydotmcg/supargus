@@ -84,6 +84,7 @@ On Windows installs, `supargus-app` is also exposed as a GUI launcher.
 | Takedown Studio | Generates opt-out, deletion, do-not-sell/share, and follow-up request drafts. |
 | Mail Runner | Previews and sends reviewed requests through SMTP or Gmail app-password config. |
 | Form Queue | Tracks brokers that require manual web forms, with open/copy/mark-submitted controls. |
+| Custom Removals | Adds arbitrary URLs outside the broker registry and prepares local removal drafts. |
 | Compliance Tracker | Tracks submitted, waiting, confirmed, denied, due, and follow-up states. |
 | Monitor | Diffs recurring scans for new matches, clears, and reappearances. |
 | Evidence Bundle | Exports reports, drafts, tracker state, form queue, and hashes into a portable zip. |

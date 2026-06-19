@@ -41,6 +41,17 @@ supargus forms list --queue workspace/forms/forms.json
 supargus forms update fastpeoplesearch submitted --queue workspace/forms/forms.json --notes "Submitted through website form"
 ```
 
+## Custom Removals
+
+Use this for URLs or sites outside the default broker registry.
+
+```bash
+supargus custom add https://example.com/profile/jane --queue workspace/custom/custom.json --reason "personal data exposed"
+supargus custom list --queue workspace/custom/custom.json
+supargus custom prepare --queue workspace/custom/custom.json --identity workspace/identity.example.json --output-dir workspace/custom/requests
+supargus custom update custom_1234567890 submitted --queue workspace/custom/custom.json --notes "Submitted through contact form"
+```
+
 ## Compliance Tracker
 
 ```bash

@@ -11,6 +11,7 @@ from .broker import search_brokers
 from .app import run_app
 from .bundle import export_bundle
 from .config import DEFAULT_CONFIG_NAME, load_config, save_default_config
+from .custom import add_custom_target, format_custom_targets, load_custom_targets, prepare_custom_requests, update_custom_status
 from .desktop import run_desktop_app
 from .forms import build_form_queue, format_form_queue, load_form_queue, update_form_status
 from .identity import load_identity, sample_identity, save_identity
@@ -138,6 +139,31 @@ def cmd_forms_list(args: argparse.Namespace) -> int:
 def cmd_forms_update(args: argparse.Namespace) -> int:
     tasks = update_form_status(args.queue, args.broker_id, args.status, notes=args.notes)
     print(f"Updated form queue. {len(tasks)} task(s) total.")
+    return 0
+
+
+def cmd_custom_add(args: argparse.Namespace) -> int:
+    target = add_custom_target(args.queue, args.url, reason=args.reason, notes=args.notes)
+    print(f"Added custom removal target: {target.id}\t{target.domain}\t{target.url}")
+    return 0
+
+
+def cmd_custom_list(args: argparse.Namespace) -> int:
+    print(format_custom_targets(load_custom_targets(args.queue)))
+    return 0
+
+
+def cmd_custom_prepare(args: argparse.Namespace) -> int:
+    identity = load_identity(args.identity)
+    targets = load_custom_targets(args.queue)
+    requests, manifest = prepare_custom_requests(targets, identity, args.output_dir)
+    print(f"Prepared {len(requests)} custom removal draft(s): {manifest}")
+    return 0
+
+
+def cmd_custom_update(args: argparse.Namespace) -> int:
+    targets = update_custom_status(args.queue, args.target_id, args.status, notes=args.notes)
+    print(f"Updated custom removal queue. {len(targets)} target(s) total.")
     return 0
 
 
@@ -367,6 +393,29 @@ def build_parser() -> argparse.ArgumentParser:
     p_forms_update.add_argument("--queue", default="reports/forms/forms.json")
     p_forms_update.add_argument("--notes", default="")
     p_forms_update.set_defaults(func=cmd_forms_update)
+
+    p_custom = sub.add_parser("custom", help="manage custom removal URLs outside the broker registry")
+    custom_sub = p_custom.add_subparsers(dest="custom_command", required=True)
+    p_custom_add = custom_sub.add_parser("add", help="add a URL or site to the custom removal queue")
+    p_custom_add.add_argument("url")
+    p_custom_add.add_argument("--queue", default="reports/custom/custom.json")
+    p_custom_add.add_argument("--reason", default="custom_removal")
+    p_custom_add.add_argument("--notes", default="")
+    p_custom_add.set_defaults(func=cmd_custom_add)
+    p_custom_list = custom_sub.add_parser("list", help="list custom removal targets")
+    p_custom_list.add_argument("--queue", default="reports/custom/custom.json")
+    p_custom_list.set_defaults(func=cmd_custom_list)
+    p_custom_prepare = custom_sub.add_parser("prepare", help="prepare custom removal request drafts")
+    p_custom_prepare.add_argument("--queue", default="reports/custom/custom.json")
+    p_custom_prepare.add_argument("--identity", required=True)
+    p_custom_prepare.add_argument("--output-dir", default="reports/custom/requests")
+    p_custom_prepare.set_defaults(func=cmd_custom_prepare)
+    p_custom_update = custom_sub.add_parser("update", help="update one custom removal target status")
+    p_custom_update.add_argument("target_id")
+    p_custom_update.add_argument("status")
+    p_custom_update.add_argument("--queue", default="reports/custom/custom.json")
+    p_custom_update.add_argument("--notes", default="")
+    p_custom_update.set_defaults(func=cmd_custom_update)
 
     p_watchdog = sub.add_parser("watchdog", help="local machine privacy checks")
     watchdog_sub = p_watchdog.add_subparsers(dest="watchdog_command", required=True)

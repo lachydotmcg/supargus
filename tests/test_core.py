@@ -14,6 +14,7 @@ from supargus.broker import build_search_url, score_broker_page, search_brokers
 from supargus.bundle import export_bundle
 from supargus.cli import build_parser
 from supargus.config import WorkflowConfig, load_config, save_default_config
+from supargus.custom import add_custom_target, load_custom_targets, prepare_custom_requests, update_custom_status
 from supargus.desktop import DESKTOP_ACTIONS
 from supargus.forms import build_form_queue, format_form_queue
 from supargus.identity import identity_from_dict, sample_identity, save_identity, load_identity
@@ -177,6 +178,19 @@ class SupargusCoreTests(unittest.TestCase):
         self.assertEqual(len(tasks), 1)
         self.assertIn(broker.id, formatted)
 
+    def test_custom_removal_queue_and_drafts(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            queue_path = Path(tmp) / "custom" / "custom.json"
+            target = add_custom_target(queue_path, "example.com/profile/jane", reason="personal data exposed")
+            loaded = load_custom_targets(queue_path)
+            requests, manifest = prepare_custom_requests(loaded, sample_identity(), Path(tmp) / "custom" / "requests")
+            update_custom_status(queue_path, target.id, "submitted", notes="manual form")
+            updated = load_custom_targets(queue_path)
+            self.assertTrue(manifest.exists())
+        self.assertTrue(target.url.startswith("https://"))
+        self.assertEqual(len(requests), 1)
+        self.assertEqual(updated[0].status, "submitted")
+
     def test_desktop_actions_cover_core_workflow(self) -> None:
         actions = {action for action, _, _ in DESKTOP_ACTIONS}
         self.assertIn("workflow", actions)
@@ -192,12 +206,14 @@ class SupargusCoreTests(unittest.TestCase):
         web_args = parser.parse_args(["web", "--workspace", "workspace", "--port", "8765"])
         gmail_args = parser.parse_args(["mail", "setup-gmail", "--email", "a@example.com", "--app-password", "abcdefghijklmnop"])
         form_args = parser.parse_args(["forms", "build", "--requests", "workspace/requests/requests.json"])
+        custom_args = parser.parse_args(["custom", "add", "https://example.com/profile/jane"])
         self.assertEqual(app_args.command, "app")
         self.assertEqual(app_args.workspace, "workspace")
         self.assertEqual(web_args.command, "web")
         self.assertEqual(web_args.port, 8765)
         self.assertEqual(gmail_args.mail_command, "setup-gmail")
         self.assertEqual(form_args.forms_command, "build")
+        self.assertEqual(custom_args.custom_command, "add")
 
     def test_tracker_import_update_and_due(self) -> None:
         profile = sample_identity()
