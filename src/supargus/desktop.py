@@ -12,8 +12,9 @@ from pathlib import Path
 from typing import Any
 
 from .app import build_state, run_action
+from .custom import add_custom_target, load_custom_targets, prepare_custom_requests, update_custom_status
 from .forms import FormTask, load_form_queue, update_form_status
-from .identity import sample_identity, save_identity
+from .identity import load_identity, sample_identity, save_identity
 
 try:  # Keep imports optional so headless test environments can still import the package.
     import tkinter as tk
@@ -73,6 +74,8 @@ class SupargusDesktop:
         self.config_var = tk.StringVar(value="supargus.config.json")
         self.smtp_var = tk.StringVar(value=str(workspace_path / "smtp.gmail.json"))
         self.limit_var = tk.StringVar(value="10")
+        self.custom_url_var = tk.StringVar(value="")
+        self.custom_reason_var = tk.StringVar(value="personal data exposed")
         self.status_var = tk.StringVar(value="Ready")
 
         self.metric_vars = {
@@ -140,9 +143,10 @@ class SupargusDesktop:
             ("Broker Radar", "brokers"),
             ("Local Watchdog", "watchdog"),
             ("Monitor Changes", "changes"),
-                ("Compliance Tracker", "tracker"),
-                ("Form Queue", "forms"),
-                ("Run Log", "log"),
+            ("Compliance Tracker", "tracker"),
+            ("Form Queue", "forms"),
+            ("Custom Removals", "custom"),
+            ("Run Log", "log"),
         ):
             button = tk.Button(
                 nav,
@@ -221,6 +225,7 @@ class SupargusDesktop:
         self.changes_tab = ttk.Frame(self.notebook, padding=16)
         self.tracker_tab = ttk.Frame(self.notebook, padding=16)
         self.forms_tab = ttk.Frame(self.notebook, padding=16)
+        self.custom_tab = ttk.Frame(self.notebook, padding=16)
         self.log_tab = ttk.Frame(self.notebook, padding=16)
 
         for tab, label in (
@@ -230,6 +235,7 @@ class SupargusDesktop:
             (self.changes_tab, "Monitor Changes"),
             (self.tracker_tab, "Compliance Tracker"),
             (self.forms_tab, "Form Queue"),
+            (self.custom_tab, "Custom Removals"),
             (self.log_tab, "Run Log"),
         ):
             self.notebook.add(tab, text=label)
@@ -240,6 +246,7 @@ class SupargusDesktop:
         self.change_tree = self._tree(self.changes_tab, ("broker", "change", "previous", "current", "detail"))
         self.tracker_tree = self._tree(self.tracker_tab, ("broker", "status", "delivery", "updated"))
         self._build_forms_tab()
+        self._build_custom_tab()
         self.log_text = self._text_panel(self.log_tab)
         self._log("Supargus desktop is ready.")
 
@@ -310,6 +317,53 @@ class SupargusDesktop:
         detail_body.rowconfigure(0, weight=1)
         self.forms_text = self._text_panel(detail_body)
 
+    def _build_custom_tab(self) -> None:
+        self.custom_targets = []
+        self.custom_tab.columnconfigure(0, weight=1)
+        self.custom_tab.columnconfigure(1, weight=1)
+        self.custom_tab.rowconfigure(2, weight=1)
+
+        editor = ttk.Frame(self.custom_tab, style="Panel.TFrame", padding=14)
+        editor.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 12))
+        editor.columnconfigure(1, weight=1)
+        ttk.Label(editor, text="Add Custom Removal Target", style="PanelTitle.TLabel").grid(row=0, column=0, columnspan=3, sticky="w")
+        ttk.Label(editor, text="URL", style="Muted.TLabel").grid(row=1, column=0, sticky="w", pady=(10, 0))
+        ttk.Entry(editor, textvariable=self.custom_url_var).grid(row=1, column=1, sticky="ew", padx=10, pady=(10, 0))
+        ttk.Label(editor, text="Reason", style="Muted.TLabel").grid(row=2, column=0, sticky="w", pady=(8, 0))
+        ttk.Entry(editor, textvariable=self.custom_reason_var).grid(row=2, column=1, sticky="ew", padx=10, pady=(8, 0))
+        ttk.Button(editor, text="Add URL", style="Primary.TButton", command=self._add_custom_target).grid(row=1, column=2, sticky="e", pady=(10, 0))
+        ttk.Button(editor, text="Prepare Drafts", style="Ghost.TButton", command=self._prepare_custom_drafts).grid(row=2, column=2, sticky="e", pady=(8, 0))
+
+        controls = ttk.Frame(self.custom_tab)
+        controls.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(0, 12))
+        ttk.Button(controls, text="Mark Submitted", style="Ghost.TButton", command=self._mark_custom_submitted).pack(side="left")
+        ttk.Button(controls, text="Refresh", style="Ghost.TButton", command=self.refresh).pack(side="left", padx=8)
+
+        table_frame = ttk.Frame(self.custom_tab)
+        table_frame.grid(row=2, column=0, sticky="nsew", padx=(0, 10))
+        table_frame.columnconfigure(0, weight=1)
+        table_frame.rowconfigure(0, weight=1)
+        self.custom_tree = ttk.Treeview(table_frame, columns=("id", "status", "domain", "url"), show="headings")
+        for column, width in (("id", 120), ("status", 120), ("domain", 180), ("url", 360)):
+            self.custom_tree.heading(column, text=column.title())
+            self.custom_tree.column(column, width=width, anchor="w")
+        ybar = ttk.Scrollbar(table_frame, orient="vertical", command=self.custom_tree.yview)
+        self.custom_tree.configure(yscrollcommand=ybar.set)
+        self.custom_tree.grid(row=0, column=0, sticky="nsew")
+        ybar.grid(row=0, column=1, sticky="ns")
+
+        detail_frame = ttk.Frame(self.custom_tab)
+        detail_frame.grid(row=2, column=1, sticky="nsew")
+        detail_frame.columnconfigure(0, weight=1)
+        detail_frame.rowconfigure(1, weight=1)
+        ttk.Label(detail_frame, text="Selected Target", style="PanelTitle.TLabel").grid(row=0, column=0, sticky="w", pady=(0, 8))
+        detail_body = ttk.Frame(detail_frame)
+        detail_body.grid(row=1, column=0, sticky="nsew")
+        detail_body.columnconfigure(0, weight=1)
+        detail_body.rowconfigure(0, weight=1)
+        self.custom_text = self._text_panel(detail_body)
+        self.custom_tree.bind("<<TreeviewSelect>>", lambda _event: self._show_selected_custom())
+
     def _field(self, parent: "ttk.Frame", row: int, label: str, variable: "tk.StringVar", browse: Any) -> None:
         ttk.Label(parent, text=label, style="Muted.TLabel").grid(row=row, column=0, sticky="w", pady=(10, 0))
         ttk.Entry(parent, textvariable=variable).grid(row=row, column=1, sticky="ew", padx=10, pady=(10, 0))
@@ -357,6 +411,7 @@ class SupargusDesktop:
             "changes": self.changes_tab,
             "tracker": self.tracker_tab,
             "forms": self.forms_tab,
+            "custom": self.custom_tab,
             "log": self.log_tab,
         }
         self.notebook.select(mapping[key])
@@ -411,6 +466,7 @@ class SupargusDesktop:
         self._populate_changes(state["changes"])
         self._populate_tracker(state["tracker"])
         self._populate_forms(state)
+        self._populate_custom()
 
     def _populate_brokers(self, items: list[dict[str, Any]]) -> None:
         self._clear_tree(self.broker_tree)
@@ -543,6 +599,87 @@ class SupargusDesktop:
             self.refresh()
         except Exception as exc:
             self._log(f"Could not update form task:\n{exc}")
+
+    def _custom_queue_path(self) -> Path:
+        return Path(self.workspace_var.get()) / "custom" / "custom.json"
+
+    def _populate_custom(self) -> None:
+        try:
+            self.custom_targets = load_custom_targets(self._custom_queue_path())
+        except Exception:
+            self.custom_targets = []
+        self._clear_tree(self.custom_tree)
+        for idx, target in enumerate(self.custom_targets):
+            self.custom_tree.insert("", "end", iid=str(idx), values=(target.id, target.status, target.domain, target.url))
+        if self.custom_targets:
+            first = "0"
+            self.custom_tree.selection_set(first)
+            self.custom_tree.focus(first)
+        self._show_selected_custom()
+
+    def _selected_custom_target(self):
+        selected = self.custom_tree.selection()
+        if not selected:
+            return None
+        try:
+            return self.custom_targets[int(selected[0])]
+        except Exception:
+            return None
+
+    def _show_selected_custom(self) -> None:
+        target = self._selected_custom_target()
+        self.custom_text.configure(state="normal")
+        self.custom_text.delete("1.0", "end")
+        if not target:
+            self.custom_text.insert("end", "No custom removal targets yet. Add a URL above.")
+        else:
+            self.custom_text.insert(
+                "end",
+                f"{target.status.upper()}  {target.domain}\n"
+                f"ID: {target.id}\n"
+                f"URL: {target.url}\n"
+                f"Reason: {target.reason}\n"
+                f"Notes: {target.notes}\n",
+            )
+        self.custom_text.configure(state="disabled")
+
+    def _add_custom_target(self) -> None:
+        try:
+            target = add_custom_target(
+                self._custom_queue_path(),
+                self.custom_url_var.get(),
+                reason=self.custom_reason_var.get() or "custom_removal",
+            )
+            self.custom_url_var.set("")
+            self._log(f"Added custom removal target:\n{target.id} {target.url}")
+            self.refresh()
+        except Exception as exc:
+            self._log(f"Could not add custom target:\n{exc}")
+            if messagebox:
+                messagebox.showerror("Supargus", str(exc))
+
+    def _prepare_custom_drafts(self) -> None:
+        try:
+            identity = load_identity(self.identity_var.get())
+            targets = load_custom_targets(self._custom_queue_path())
+            requests, manifest = prepare_custom_requests(targets, identity, Path(self.workspace_var.get()) / "custom" / "requests")
+            self._log(f"Prepared {len(requests)} custom removal draft(s):\n{manifest}")
+            self.status_var.set("Custom drafts prepared")
+        except Exception as exc:
+            self._log(f"Could not prepare custom drafts:\n{exc}")
+            if messagebox:
+                messagebox.showerror("Supargus", str(exc))
+
+    def _mark_custom_submitted(self) -> None:
+        target = self._selected_custom_target()
+        if not target:
+            return
+        try:
+            update_custom_status(self._custom_queue_path(), target.id, "submitted", notes="Submitted through desktop custom removals")
+            self._log(f"Marked custom target submitted: {target.domain}")
+            self.refresh()
+        except Exception as exc:
+            self._log(f"Could not update custom target:\n{exc}")
 
     def _clear_tree(self, tree: "ttk.Treeview") -> None:
         for item in tree.get_children():

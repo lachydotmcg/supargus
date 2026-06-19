@@ -45,6 +45,7 @@ Current desktop views:
 - Monitor Changes
 - Compliance Tracker
 - Form Queue with open/copy/mark-submitted controls
+- Custom Removals
 - Run Log
 
 From the app you can run broker scans, build takedown drafts, preview/send reviewed email requests through SMTP or Gmail app passwords, build manual opt-out form queues, import tracker records, generate follow-ups, export evidence bundles, and run the local watchdog.

@@ -36,6 +36,7 @@
 - [x] email preview/send actions
 - [x] form queue action
 - [x] desktop form queue workbench
+- [x] desktop custom removals workbench
 - [ ] editable review queue
 - [ ] request status editing from the app
 - [ ] broker detail drawers
