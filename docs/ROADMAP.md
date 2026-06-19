@@ -38,6 +38,7 @@
 - [x] desktop form queue workbench
 - [x] desktop custom removals workbench
 - [x] Windows shortcut helper
+- [ ] first-run tutorial for initial security checks and reviewed cleanup actions
 - [ ] editable review queue
 - [ ] request status editing from the app
 - [ ] broker detail drawers
