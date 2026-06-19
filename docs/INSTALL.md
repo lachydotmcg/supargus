@@ -32,6 +32,12 @@ On Windows installs:
 supargus-app
 ```
 
+Create Start Menu and Desktop shortcuts:
+
+```powershell
+supargus shortcut install --workspace workspace
+```
+
 ## Create an Identity File
 
 ```bash

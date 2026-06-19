@@ -25,6 +25,7 @@ from .tracker import due_for_follow_up, format_records, import_requests, load_tr
 from .vault import open_file, seal_file, secure_delete_plaintext, vault_available
 from .watchdog import run_watchdog
 from .schedule import schedule_instructions
+from .shortcut import install_shortcuts
 from .workflow import run_workflow
 
 
@@ -312,6 +313,19 @@ def cmd_schedule_print(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_shortcut_install(args: argparse.Namespace) -> int:
+    created = install_shortcuts(
+        name=args.name,
+        workspace=args.workspace,
+        desktop=args.desktop,
+        start_menu=args.start_menu,
+        working_dir=Path.cwd(),
+    )
+    for path in created:
+        print(f"Created shortcut: {path}")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Supargus local-first privacy watchdog")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -514,6 +528,15 @@ def build_parser() -> argparse.ArgumentParser:
     p_schedule_print.add_argument("--config", default=DEFAULT_CONFIG_NAME)
     p_schedule_print.add_argument("--time", default="09:00")
     p_schedule_print.set_defaults(func=cmd_schedule_print)
+
+    p_shortcut = sub.add_parser("shortcut", help="install desktop/start-menu launchers")
+    shortcut_sub = p_shortcut.add_subparsers(dest="shortcut_command", required=True)
+    p_shortcut_install = shortcut_sub.add_parser("install", help="create Windows shortcuts for the desktop app")
+    p_shortcut_install.add_argument("--name", default="Supargus")
+    p_shortcut_install.add_argument("--workspace", default="workspace")
+    p_shortcut_install.add_argument("--desktop", action=argparse.BooleanOptionalAction, default=True)
+    p_shortcut_install.add_argument("--start-menu", action=argparse.BooleanOptionalAction, default=True)
+    p_shortcut_install.set_defaults(func=cmd_shortcut_install)
 
     p_app = sub.add_parser("app", help="open the Supargus desktop app")
     p_app.add_argument("--workspace", default="workspace")

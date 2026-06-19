@@ -23,6 +23,7 @@ from supargus.monitor import diff_matches, diff_payload, save_snapshot, latest_s
 from supargus.models import BrokerMatch
 from supargus.registry import load_default_brokers, validate_brokers
 from supargus.schedule import cron_line, schedule_instructions, schtasks_create_command
+from supargus.shortcut import build_shortcut_spec, shortcut_locations
 from supargus.takedown import prepare_requests
 from supargus.tracker import due_for_follow_up, import_requests, load_tracker, prepare_followups, update_status
 from supargus.vault import open_file, seal_file, vault_available
@@ -207,6 +208,7 @@ class SupargusCoreTests(unittest.TestCase):
         gmail_args = parser.parse_args(["mail", "setup-gmail", "--email", "a@example.com", "--app-password", "abcdefghijklmnop"])
         form_args = parser.parse_args(["forms", "build", "--requests", "workspace/requests/requests.json"])
         custom_args = parser.parse_args(["custom", "add", "https://example.com/profile/jane"])
+        shortcut_args = parser.parse_args(["shortcut", "install", "--workspace", "workspace", "--no-desktop"])
         self.assertEqual(app_args.command, "app")
         self.assertEqual(app_args.workspace, "workspace")
         self.assertEqual(web_args.command, "web")
@@ -214,6 +216,16 @@ class SupargusCoreTests(unittest.TestCase):
         self.assertEqual(gmail_args.mail_command, "setup-gmail")
         self.assertEqual(form_args.forms_command, "build")
         self.assertEqual(custom_args.custom_command, "add")
+        self.assertEqual(shortcut_args.shortcut_command, "install")
+        self.assertFalse(shortcut_args.desktop)
+
+    def test_shortcut_spec_builds_desktop_launcher(self) -> None:
+        locations = shortcut_locations("Supargus Review")
+        spec = build_shortcut_spec("Supargus Review", "workspace", "desktop", working_dir="C:/repo/supargus")
+        self.assertEqual(spec.path, locations["desktop"])
+        self.assertIn("-m supargus.cli app", spec.arguments)
+        self.assertIn("workspace", spec.arguments)
+        self.assertEqual(spec.working_dir, Path("C:/repo/supargus"))
 
     def test_tracker_import_update_and_due(self) -> None:
         profile = sample_identity()

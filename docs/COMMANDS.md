@@ -108,3 +108,12 @@ supargus schedule print --config supargus.config.json --time 09:00
 ```
 
 This prints Windows Task Scheduler and cron examples. Supargus does not install scheduled tasks without you copying/running the command yourself.
+
+## Desktop Shortcuts
+
+Windows shortcut helper:
+
+```powershell
+supargus shortcut install --workspace workspace
+supargus shortcut install --workspace workspace --no-desktop --start-menu
+```
