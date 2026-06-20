@@ -37,17 +37,33 @@ def build_search_url(template: str, identity: IdentityProfile) -> str:
 
 
 def _identity_needles(identity: IdentityProfile) -> list[tuple[str, str]]:
-    address = identity.primary_address()
-    candidates = [
-        ("name", identity.full_name),
-        ("email", identity.primary_email()),
-        ("phone", identity.phones[0] if identity.phones else ""),
-        ("city", address.city),
-        ("state", address.region),
-        ("postal_code", address.postal_code),
-        ("username", identity.usernames[0] if identity.usernames else ""),
-    ]
-    return [(key, value.lower()) for key, value in candidates if value]
+    candidates: list[tuple[str, str]] = []
+    for name in identity.search_names():
+        candidates.append(("name", name))
+    for email in identity.emails:
+        candidates.append(("email", email))
+    for phone in identity.phones:
+        candidates.append(("phone", phone))
+    for address in identity.addresses:
+        candidates.extend(
+            [
+                ("city", address.city),
+                ("state", address.region),
+                ("postal_code", address.postal_code),
+            ]
+        )
+    for username in identity.usernames:
+        candidates.append(("username", username))
+
+    seen: set[tuple[str, str]] = set()
+    needles: list[tuple[str, str]] = []
+    for key, value in candidates:
+        normalized = value.strip().lower()
+        if not normalized or (key, normalized) in seen:
+            continue
+        seen.add((key, normalized))
+        needles.append((key, normalized))
+    return needles
 
 
 def _fetch(url: str, timeout: float = 12.0) -> tuple[str, str]:
@@ -126,6 +142,7 @@ def search_broker(
             score=0,
             search_url=search_url,
             evidence_url=search_url,
+            evidence="Public search could not be verified. Treat this broker as request-only unless you review it manually.",
             error=error,
         )
 
@@ -154,4 +171,3 @@ def search_brokers(
 ) -> list[BrokerMatch]:
     selected = brokers[:limit] if limit else brokers
     return [search_broker(broker, identity, fetch=fetch, timeout=timeout) for broker in selected]
-

@@ -83,11 +83,12 @@ def prepare_requests(
     out.mkdir(parents=True, exist_ok=True)
     broker_map = {broker.id: broker for broker in brokers}
     requests: list[TakedownRequest] = []
+    request_only_statuses = {"needs_manual_review", "fetch_error"}
 
     for match in matches:
         if match.status == "no_obvious_match":
             continue
-        if match.confidence in {"unknown", "low"} and not include_low_confidence and match.status != "needs_manual_review":
+        if match.confidence in {"unknown", "low"} and not include_low_confidence and match.status not in request_only_statuses:
             continue
         broker = broker_map.get(match.broker_id)
         if not broker:
@@ -124,4 +125,3 @@ def load_requests(path: str | Path) -> list[TakedownRequest]:
             )
         )
     return requests
-

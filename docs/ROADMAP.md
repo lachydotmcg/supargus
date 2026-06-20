@@ -38,7 +38,9 @@
 - [x] desktop form queue workbench
 - [x] desktop custom removals workbench
 - [x] Windows shortcut helper
-- [ ] first-run tutorial for initial security checks and reviewed cleanup actions
+- [x] first-run tutorial for initial security checks and reviewed cleanup actions
+- [x] desktop scans attempt lightweight broker verification by default
+- [x] request-only takedown path for brokers that cannot be directly searched
 - [ ] editable review queue
 - [ ] request status editing from the app
 - [ ] broker detail drawers

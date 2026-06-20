@@ -25,6 +25,8 @@ def matches_payload(matches: list[BrokerMatch]) -> dict[str, Any]:
             "checked": len(matches),
             "possible_matches": sum(1 for match in matches if match.status == "possible_match"),
             "manual_review": sum(1 for match in matches if match.status == "needs_manual_review"),
+            "request_only": sum(1 for match in matches if match.status in {"fetch_error", "needs_manual_review"}),
+            "verified_or_likely": sum(1 for match in matches if match.status == "possible_match" and match.score > 0),
             "errors": sum(1 for match in matches if match.status == "fetch_error"),
         },
     }
@@ -101,4 +103,3 @@ def write_html_report(
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(html, encoding="utf-8")
     return p
-

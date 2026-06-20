@@ -62,6 +62,21 @@ class SupargusCoreTests(unittest.TestCase):
         self.assertIn("name", matched)
         self.assertEqual(confidence, "high")
 
+    def test_score_broker_page_checks_aliases_and_secondary_contacts(self) -> None:
+        profile = identity_from_dict(
+            {
+                "full_name": "Jane Example",
+                "aliases": ["J Example"],
+                "emails": ["jane@example.com", "jane.alt@example.com"],
+                "phones": ["555-1111", "555-2222"],
+            }
+        )
+        score, matched, confidence = score_broker_page("J Example can be reached at jane.alt@example.com", profile)
+        self.assertGreaterEqual(score, 55)
+        self.assertIn("name", matched)
+        self.assertIn("email", matched)
+        self.assertEqual(confidence, "medium")
+
     def test_search_brokers_dry_run(self) -> None:
         profile = sample_identity()
         brokers = load_default_brokers()[:2]
@@ -86,6 +101,23 @@ class SupargusCoreTests(unittest.TestCase):
             self.assertEqual(len(requests), 1)
             self.assertTrue(manifest.exists())
             self.assertTrue(Path(requests[0].file_path).exists())
+
+    def test_prepare_requests_includes_request_only_fetch_errors(self) -> None:
+        profile = sample_identity()
+        broker = load_default_brokers()[0]
+        match = BrokerMatch(
+            broker_id=broker.id,
+            broker_name=broker.name,
+            status="fetch_error",
+            confidence="unknown",
+            score=0,
+            search_url="https://example.com/search",
+            evidence_url="https://example.com/search",
+            error="blocked by site",
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            requests, _ = prepare_requests([match], [broker], profile, tmp)
+        self.assertEqual(len(requests), 1)
 
     def test_env_proxy_detection(self) -> None:
         with patch.dict(os.environ, {"HTTP_PROXY": "http://127.0.0.1:9999"}, clear=True):
@@ -146,6 +178,14 @@ class SupargusCoreTests(unittest.TestCase):
             result = run_action(Path(tmp), {"action": "validate", "workspace": tmp})
         self.assertTrue(result["valid"])
         self.assertEqual(result["errors"], [])
+
+    def test_app_broker_scan_uses_fetch_when_requested(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            identity = Path(tmp) / "identity.json"
+            save_identity(sample_identity(), identity)
+            with patch("supargus.app.search_brokers", return_value=[]) as mocked:
+                run_action(Path(tmp), {"action": "broker_scan", "workspace": tmp, "identity": str(identity), "fetch": True})
+        self.assertTrue(mocked.call_args.kwargs["fetch"])
 
     def test_gmail_smtp_config_roundtrip(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

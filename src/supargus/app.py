@@ -92,6 +92,8 @@ def build_state(workspace: str | Path) -> dict:
             "brokers_checked": int(broker_summary.get("checked", 0) or 0),
             "possible_matches": int(broker_summary.get("possible_matches", 0) or 0),
             "manual_reviews": int(broker_summary.get("manual_review", 0) or 0),
+            "request_only": int(broker_summary.get("request_only", 0) or 0),
+            "verified_or_likely": int(broker_summary.get("verified_or_likely", 0) or 0),
             "watchdog_findings": int(watchdog_summary.get("findings", 0) or 0),
             "high_severity": int(watchdog_summary.get("high", 0) or 0),
             "scan_changes": int(monitor_summary.get("changes", 0) or 0),
@@ -441,6 +443,7 @@ def run_action(workspace: Path, payload: dict) -> dict:
     smtp_config = str(payload.get("smtp_config") or workspace / "smtp.gmail.json")
     limit = int(payload.get("limit") or 10)
     root = Path(payload.get("workspace") or workspace)
+    fetch = bool(payload.get("fetch", False))
     root.mkdir(parents=True, exist_ok=True)
 
     if action == "validate":
@@ -459,11 +462,12 @@ def run_action(workspace: Path, payload: dict) -> dict:
         config.followups_dir = str(root / "followups")
         config.bundle_path = str(root / "supargus_evidence_bundle.zip")
         config.limit = limit
+        config.fetch = fetch
         return run_workflow(config)
 
     if action == "broker_scan":
         identity = load_identity(identity_path)
-        matches = search_brokers(load_registry(None), identity, limit=limit)
+        matches = search_brokers(load_registry(None), identity, fetch=fetch, limit=limit)
         out = write_json(matches_payload(matches), root / "broker_matches.json")
         html = write_html_report(root / "broker_matches.html", title="Supargus Broker Radar", matches=matches)
         return {"matches": len(matches), "output": str(out), "html": str(html)}

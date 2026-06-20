@@ -27,6 +27,14 @@ except Exception:  # pragma: no cover - depends on local Python GUI support.
     messagebox = None
 
 
+GUIDE_STEPS = (
+    ("1", "Set up your identity", "Use a local identity vault or sample profile so Supargus knows what to search for."),
+    ("2", "Run a verified scan", "Supargus tries lightweight public searches first, then marks private brokers as request-only."),
+    ("3", "Review evidence", "Check matches, blocked searches, and this-PC findings before sending anything."),
+    ("4", "Take action", "Prepare removals, build form tasks, preview emails, and export receipts from your machine."),
+)
+
+
 DESKTOP_ACTIONS: tuple[tuple[str, str, str], ...] = (
     ("workflow", "Run privacy check", "Scan exposure, create drafts, update tracker, and export receipts."),
     ("broker_scan", "Scan data brokers", "Check the broker registry for likely exposure."),
@@ -38,6 +46,7 @@ DESKTOP_ACTIONS: tuple[tuple[str, str, str], ...] = (
     ("tracker_import", "Import tracker", "Track requests, status, and follow-up dates."),
     ("followups", "Generate follow-ups", "Create follow-up drafts for pending requests."),
     ("bundle", "Export receipts", "Zip evidence, reports, drafts, and hashes."),
+    ("guide_take_action", "Guide: take action", "Prepare requests, tracker records, form tasks, and receipts from current results."),
     ("validate", "Validate registry", "Check broker adapters before scanning."),
 )
 
@@ -93,6 +102,7 @@ def _asset_path(name: str) -> str:
 def _privacy_score(summary: dict[str, Any]) -> int:
     score = 100
     score -= min(32, int(summary.get("possible_matches", 0) or 0) * 4)
+    score -= min(18, int(summary.get("request_only", 0) or 0) * 2)
     score -= min(24, int(summary.get("watchdog_findings", 0) or 0) * 6)
     score -= min(18, int(summary.get("scan_changes", 0) or 0) * 5)
     score += min(10, int(summary.get("request_drafts", 0) or 0) * 2)
@@ -132,6 +142,7 @@ class SupargusDesktop:
             "brokers": tk.StringVar(value="0"),
             "matches": tk.StringVar(value="0"),
             "watchdog": tk.StringVar(value="0"),
+            "request_only": tk.StringVar(value="0"),
             "changes": tk.StringVar(value="0"),
             "requests": tk.StringVar(value="0"),
             "bundle": tk.StringVar(value="0 B"),
@@ -190,6 +201,7 @@ class SupargusDesktop:
         self.content.rowconfigure(0, weight=1)
 
         self._build_home_page()
+        self._build_guide_page()
         self._build_cleanup_page()
         self._build_watchdog_page()
         self._build_removals_page()
@@ -221,6 +233,7 @@ class SupargusDesktop:
 
         items = (
             ("home", "Dashboard"),
+            ("guide", "Guide"),
             ("cleanup", "Cleanup"),
             ("watchdog", "This PC"),
             ("removals", "Removals"),
@@ -341,6 +354,7 @@ class SupargusDesktop:
         metrics.pack(fill="x", padx=22, pady=(4, 20))
         for label, var in (
             ("Possible matches", self.metric_vars["matches"]),
+            ("Request-only brokers", self.metric_vars["request_only"]),
             ("Watchdog findings", self.metric_vars["watchdog"]),
             ("Draft requests", self.metric_vars["requests"]),
             ("Evidence bundle", self.metric_vars["bundle"]),
@@ -349,6 +363,55 @@ class SupargusDesktop:
             row.pack(fill="x", pady=6)
             tk.Label(row, text=label, bg=COLORS["surface"], fg=COLORS["muted"], font=("Segoe UI", 10)).pack(side="left")
             tk.Label(row, textvariable=var, bg=COLORS["surface"], fg=COLORS["ink"], font=("Segoe UI", 10, "bold")).pack(side="right")
+
+    def _build_guide_page(self) -> None:
+        page = self._page("guide")
+        page.columnconfigure(0, weight=1)
+        page.columnconfigure(1, weight=1)
+        page.rowconfigure(2, weight=1)
+        self._section_header(page, "First privacy check", "A guided pass from local setup to reviewed cleanup action.")
+
+        checklist = self._card(page, 1, 0, rowspan=2)
+        checklist.columnconfigure(0, weight=1)
+        tk.Label(checklist, text="What happens first", bg=COLORS["surface"], fg=COLORS["ink"], font=("Segoe UI", 15, "bold")).pack(anchor="w", padx=20, pady=(18, 8))
+        for number, title, body in GUIDE_STEPS:
+            row = tk.Frame(checklist, bg=COLORS["surface"])
+            row.pack(fill="x", padx=20, pady=8)
+            badge = tk.Label(row, text=number, bg=COLORS["yellow_soft"], fg=COLORS["blue"], width=3, font=("Segoe UI", 10, "bold"))
+            badge.pack(side="left", ipady=5)
+            copy = tk.Frame(row, bg=COLORS["surface"])
+            copy.pack(side="left", fill="x", expand=True, padx=(12, 0))
+            tk.Label(copy, text=title, bg=COLORS["surface"], fg=COLORS["ink"], font=("Segoe UI", 11, "bold")).pack(anchor="w")
+            tk.Label(copy, text=body, bg=COLORS["surface"], fg=COLORS["muted"], font=("Segoe UI", 9), wraplength=410, justify="left").pack(anchor="w", pady=(2, 0))
+
+        actions = self._card(page, 1, 1, padx=(0, 0))
+        actions.columnconfigure(0, weight=1)
+        tk.Label(actions, text="Do the useful bit", bg=COLORS["surface"], fg=COLORS["ink"], font=("Segoe UI", 15, "bold")).pack(anchor="w", padx=20, pady=(18, 6))
+        tk.Label(
+            actions,
+            text="This uses public search checks where possible, prepares local takedown drafts, builds manual form tasks, imports tracker records, and exports receipts. Emails still require review before sending.",
+            bg=COLORS["surface"],
+            fg=COLORS["muted"],
+            font=("Segoe UI", 10),
+            wraplength=360,
+            justify="left",
+        ).pack(anchor="w", padx=20, pady=(0, 16))
+        guide_button = self._button(actions, "Run guided scan", lambda: self.run_action("workflow"), primary=True)
+        guide_button.pack(anchor="w", padx=20, pady=(0, 10))
+        self.buttons.append(guide_button)
+        self._button(actions, "Open cleanup view", lambda: self.show_page("cleanup")).pack(anchor="w", padx=20, pady=(0, 18))
+
+        privacy = self._card(page, 2, 1, padx=(0, 0), pady=(0, 14))
+        tk.Label(privacy, text="Privacy guardrail", bg=COLORS["surface"], fg=COLORS["ink"], font=("Segoe UI", 13, "bold")).pack(anchor="w", padx=20, pady=(18, 4))
+        tk.Label(
+            privacy,
+            text="A verified scan sends your search identifiers to public broker search pages. Private broker databases cannot always be searched, so Supargus prepares request-only actions instead.",
+            bg=COLORS["surface"],
+            fg=COLORS["muted"],
+            font=("Segoe UI", 10),
+            wraplength=370,
+            justify="left",
+        ).pack(anchor="w", padx=20, pady=(0, 18))
 
     def _home_action(self, parent: "tk.Widget", row: int, column: int, title: str, body: str, action: str, button_text: str, *, primary: bool = False) -> None:
         card = self._card(parent, row, column)
@@ -538,9 +601,12 @@ class SupargusDesktop:
             "config": self.config_var.get(),
             "smtp_config": self.smtp_var.get(),
             "limit": limit,
+            "fetch": True,
         }
 
     def run_action(self, action: str) -> None:
+        if action == "guide_take_action":
+            action = "workflow"
         if action == "mail_send" and messagebox:
             approved = messagebox.askyesno(
                 "Send reviewed emails?",
@@ -569,6 +635,7 @@ class SupargusDesktop:
 
         self.metric_vars["brokers"].set(str(summary["brokers_checked"]))
         self.metric_vars["matches"].set(str(summary["possible_matches"]))
+        self.metric_vars["request_only"].set(str(summary.get("request_only", 0)))
         self.metric_vars["watchdog"].set(str(summary["watchdog_findings"]))
         self.metric_vars["changes"].set(str(summary["scan_changes"]))
         self.metric_vars["requests"].set(str(summary["request_drafts"]))

@@ -34,12 +34,25 @@ Supargus takes the opposite stance:
 The desktop flow is intentionally plain:
 
 1. Dashboard: see your privacy score and the next recommended action.
-2. Cleanup: scan data brokers and prepare removal drafts.
-3. This PC: review local proxy, extension, startup, and bandwidth-sharing signals.
-4. Removals: handle manual opt-out forms and custom removal URLs.
-5. Advanced: use CLI-grade actions, paths, logs, and setup controls.
+2. Guide: walk through the first privacy check and reviewed cleanup action.
+3. Cleanup: scan data brokers, separate verified/likely hits from request-only brokers, and prepare removal drafts.
+4. This PC: review local proxy, extension, startup, and bandwidth-sharing signals.
+5. Removals: handle manual opt-out forms and custom removal URLs.
+6. Advanced: use CLI-grade actions, paths, logs, and setup controls.
 
 Everything is review-first. Email requests can be previewed before sending, form submissions stay manual, and evidence bundles are created locally.
+
+## What Scan Means
+
+Supargus follows the same broad shape as commercial data-removal services, but keeps the control local:
+
+- public people-search sites are checked with lightweight HTTP searches when you run the desktop app
+- aliases, secondary emails, secondary phones, usernames, and address history are included in the matcher
+- private broker databases are marked as request-only because they often cannot be searched directly
+- takedown drafts, form tasks, tracker records, follow-ups, and receipt bundles are generated on your machine
+- email sending still requires explicit review
+
+Incogni describes a similar split: it scans people-search sites where records can be found, then sends opt-out requests to brokers that may hold private database records. Supargus is not trying to be a middleman for that. It is trying to give you the local workflow.
 
 ## Quick Start
 
