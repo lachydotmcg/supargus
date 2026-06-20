@@ -43,6 +43,7 @@
 - [x] request-only takedown path for brokers that cannot be directly searched
 - [x] local request IDs, status explanations, and timeline payloads
 - [x] local action plan queue from scan, request, tracker, and form artifacts
+- [x] one-click safe local automation for drafts, form queue, tracker, follow-ups, action plan, and receipts
 - [ ] editable review queue
 - [ ] request status editing from the app
 - [ ] broker detail drawers

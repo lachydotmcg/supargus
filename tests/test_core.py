@@ -225,6 +225,35 @@ class SupargusCoreTests(unittest.TestCase):
         self.assertEqual(result["action_items"], 0)
         self.assertEqual(plan["summary"]["total"], 0)
 
+    def test_app_safe_actions_prepare_local_artifacts_without_sending(self) -> None:
+        profile = sample_identity()
+        broker = load_default_brokers()[0]
+        match = BrokerMatch(
+            broker_id=broker.id,
+            broker_name=broker.name,
+            status="needs_manual_review",
+            confidence="unknown",
+            score=0,
+            search_url="https://example.com/search",
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            identity = root / "identity.json"
+            save_identity(profile, identity)
+            (root / "broker_matches.json").write_text(
+                json.dumps({"matches": [match.__dict__], "summary": {"checked": 1, "manual_review": 1}}),
+                encoding="utf-8",
+            )
+            result = run_action(root, {"action": "safe_actions", "workspace": tmp, "identity": str(identity)})
+            self.assertTrue((root / "requests" / "requests.json").exists())
+            self.assertTrue((root / "forms" / "forms.json").exists())
+            self.assertTrue((root / "tracker.json").exists())
+            self.assertTrue((root / "action_plan.json").exists())
+            self.assertTrue((root / "supargus_evidence_bundle.zip").exists())
+        self.assertEqual(result["requests"], 1)
+        self.assertEqual(result["tracker_records"], 1)
+        self.assertGreaterEqual(result["action_items"], 1)
+
     def test_gmail_smtp_config_roundtrip(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "smtp.gmail.json"

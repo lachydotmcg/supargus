@@ -498,6 +498,29 @@ def run_action(workspace: Path, payload: dict) -> dict:
         tasks, forms_manifest = build_form_queue(requests, root / "forms" / "forms.json")
         return {"requests": len(requests), "manifest": str(manifest), "form_tasks": len(tasks), "forms": str(forms_manifest)}
 
+    if action == "safe_actions":
+        identity = load_identity(identity_path)
+        matches = _matches_from_path(root / "broker_matches.json")
+        requests, manifest = prepare_requests(matches, load_registry(None), identity, root / "requests")
+        tasks, forms_manifest = build_form_queue(requests, root / "forms" / "forms.json")
+        records = import_requests(requests, root / "tracker.json")
+        followups, followups_manifest = prepare_followups(records, root / "followups", due_only=True)
+        bundle, bundle_manifest = export_bundle(root, root / "supargus_evidence_bundle.zip")
+        plan, plan_path = write_action_plan(root)
+        return {
+            "requests": len(requests),
+            "request_manifest": str(manifest),
+            "form_tasks": len(tasks),
+            "forms": str(forms_manifest),
+            "tracker_records": len(records),
+            "followups": len(followups),
+            "followups_manifest": str(followups_manifest),
+            "bundle": str(bundle),
+            "bundle_files": int(bundle_manifest["file_count"]),
+            "action_items": plan["summary"]["total"],
+            "action_plan": str(plan_path),
+        }
+
     if action == "form_queue":
         requests = _load_requests(root / "requests" / "requests.json")
         tasks, manifest = build_form_queue(requests, root / "forms" / "forms.json")

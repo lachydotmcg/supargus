@@ -42,6 +42,7 @@ DESKTOP_ACTIONS: tuple[tuple[str, str, str], ...] = (
     ("prepare_requests", "Prepare removals", "Create readable takedown drafts from broker matches."),
     ("form_queue", "Build form queue", "Collect brokers that need manual opt-out forms."),
     ("action_plan", "Build action plan", "Turn scan, request, tracker, and form outputs into next steps."),
+    ("safe_actions", "Automate safe steps", "Prepare drafts, form queue, tracker, follow-ups, action plan, and receipts without sending."),
     ("mail_preview", "Preview emails", "Review request emails before anything is sent."),
     ("mail_send", "Send reviewed emails", "Send approved requests through your SMTP or Gmail app password config."),
     ("tracker_import", "Import tracker", "Track requests, status, and follow-up dates."),
@@ -127,6 +128,7 @@ class SupargusDesktop:
         self.pages: dict[str, "tk.Frame"] = {}
         self.form_tasks: list[FormTask] = []
         self.custom_targets: list[Any] = []
+        self.action_items: list[dict[str, Any]] = []
         self.state: dict[str, Any] = {}
 
         workspace_path = Path(workspace)
@@ -406,6 +408,9 @@ class SupargusDesktop:
         plan_button = self._button(actions, "Build action plan", lambda: self.run_action("action_plan"))
         plan_button.pack(anchor="w", padx=20, pady=(0, 10))
         self.buttons.append(plan_button)
+        safe_button = self._button(actions, "Automate safe steps", lambda: self.run_action("safe_actions"))
+        safe_button.pack(anchor="w", padx=20, pady=(0, 10))
+        self.buttons.append(safe_button)
         self._button(actions, "Open cleanup view", lambda: self.show_page("cleanup")).pack(anchor="w", padx=20, pady=(0, 18))
 
         privacy = self._card(page, 2, 1, padx=(0, 0), pady=(0, 14))
@@ -430,6 +435,10 @@ class SupargusDesktop:
         plan_card.rowconfigure(1, weight=1)
         plan_card.columnconfigure(0, weight=1)
         tk.Label(plan_card, text="Next actions", bg=COLORS["surface"], fg=COLORS["ink"], font=("Segoe UI", 14, "bold")).grid(row=0, column=0, sticky="w", padx=18, pady=(16, 8))
+        plan_controls = tk.Frame(plan_card, bg=COLORS["surface"])
+        plan_controls.grid(row=0, column=0, sticky="e", padx=18, pady=(12, 6))
+        self._button(plan_controls, "Open", self._open_selected_action).pack(side="left", padx=(0, 8))
+        self._button(plan_controls, "Copy step", self._copy_selected_action).pack(side="left")
         plan_body = tk.Frame(plan_card, bg=COLORS["surface"])
         plan_body.grid(row=1, column=0, sticky="nsew", padx=18, pady=(0, 18))
         plan_body.columnconfigure(0, weight=1)
@@ -457,6 +466,7 @@ class SupargusDesktop:
             ("Prepare removals", "prepare_requests", False),
             ("Build form queue", "form_queue", False),
             ("Build action plan", "action_plan", False),
+            ("Automate safe steps", "safe_actions", False),
             ("Preview emails", "mail_preview", False),
         ):
             button = self._button(actions, text, lambda value=action: self.run_action(value), primary=primary)
@@ -755,14 +765,16 @@ class SupargusDesktop:
     def _populate_action_plan(self, items: list[dict[str, Any]]) -> None:
         if not hasattr(self, "action_tree"):
             return
+        self.action_items = list(items)
         self._clear_tree(self.action_tree)
         if not items:
             self.action_tree.insert("", "end", values=("none", "start", "No action plan yet", "Run guided scan or Build action plan"))
             return
-        for item in items[:8]:
+        for idx, item in enumerate(items[:8]):
             self.action_tree.insert(
                 "",
                 "end",
+                iid=f"action-{idx}",
                 values=(
                     item.get("priority", ""),
                     item.get("category", ""),
@@ -783,6 +795,48 @@ class SupargusDesktop:
             return
         for idx, task in enumerate(self.form_tasks):
             self.forms_tree.insert("", "end", iid=f"form-{idx}", values=(task.broker_name, task.status, task.opt_out_url))
+
+    def _selected_action_item(self) -> dict[str, Any] | None:
+        if not hasattr(self, "action_tree"):
+            return None
+        selected = self.action_tree.selection()
+        if not selected:
+            return None
+        try:
+            index = int(selected[0].split("-", 1)[1])
+            return self.action_items[index]
+        except Exception:
+            return None
+
+    def _open_selected_action(self) -> None:
+        item = self._selected_action_item()
+        if not item:
+            self._log("Select an action first.")
+            return
+        url = str(item.get("url", ""))
+        if not url:
+            self._log("Selected action does not have a URL.")
+            return
+        webbrowser.open(url)
+        self._log(f"Opened action URL:\n{url}")
+
+    def _copy_selected_action(self) -> None:
+        item = self._selected_action_item()
+        if not item:
+            self._log("Select an action first.")
+            return
+        text = (
+            f"{item.get('title', '')}\n"
+            f"Priority: {item.get('priority', '')}\n"
+            f"Category: {item.get('category', '')}\n"
+            f"Next step: {item.get('next_step', '')}\n"
+            f"Detail: {item.get('detail', '')}\n"
+            f"URL: {item.get('url', '')}\n"
+        )
+        self.root.clipboard_clear()
+        self.root.clipboard_append(text)
+        self.status_var.set("Copied action step")
+        self._log(f"Copied action step:\n{text}")
 
     def _populate_custom(self) -> None:
         try:

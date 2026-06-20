@@ -77,6 +77,8 @@ After a guided scan or workflow run, Supargus writes `workspace/action_plan.json
 
 This is the local equivalent of a removal-service dashboard queue: it tells you what can be automated, what needs review, and what must remain manual.
 
+The `Automate safe steps` action prepares drafts, builds manual form tasks, imports tracker records, generates due follow-ups, rebuilds the action plan, and exports a receipt bundle. It does not send email or submit broker forms.
+
 ## Quick Start
 
 ```bash
@@ -119,6 +121,7 @@ supargus shortcut install --workspace workspace
 | Mail Runner | Previews and sends reviewed requests through SMTP or Gmail app-password config. |
 | Form Queue | Tracks brokers that require manual web forms, with open/copy/mark-submitted controls. |
 | Action Plan | Turns scan, request, tracker, and form outputs into a prioritized local cleanup queue. |
+| Safe Automation | One-click local prep for drafts, form queue, tracker records, follow-ups, action plan, and receipts. |
 | Custom Removals | Adds arbitrary URLs outside the broker registry and prepares local removal drafts. |
 | Compliance Tracker | Tracks submitted, waiting, confirmed, denied, due, and follow-up states. |
 | Monitor | Diffs recurring scans for new matches, clears, and reappearances. |
