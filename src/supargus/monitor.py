@@ -49,6 +49,9 @@ def load_match_payload(path: str | Path) -> list[BrokerMatch]:
                 evidence=str(item.get("evidence", "")),
                 error=str(item.get("error", "")),
                 checked_at=str(item.get("checked_at", "")),
+                broker_type=str(item.get("broker_type", "")),
+                search_method=str(item.get("search_method", "")),
+                action_mode=str(item.get("action_mode", "")),
             )
         )
     return matches

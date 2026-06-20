@@ -95,6 +95,9 @@ class BrokerMatch:
     evidence: str = ""
     error: str = ""
     checked_at: str = field(default_factory=utc_now)
+    broker_type: str = ""
+    search_method: str = ""
+    action_mode: str = ""
 
 
 @dataclass
@@ -123,4 +126,3 @@ class WatchdogFinding:
     evidence: str = ""
     remediation: str = ""
     detected_at: str = field(default_factory=utc_now)
-

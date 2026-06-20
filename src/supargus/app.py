@@ -110,6 +110,7 @@ def build_state(workspace: str | Path) -> dict:
             "possible_matches": int(broker_summary.get("possible_matches", 0) or 0),
             "manual_reviews": int(broker_summary.get("manual_review", 0) or 0),
             "request_only": int(broker_summary.get("request_only", 0) or 0),
+            "public_unverified": int(broker_summary.get("public_unverified", 0) or 0),
             "verified_or_likely": int(broker_summary.get("verified_or_likely", 0) or 0),
             "watchdog_findings": int(watchdog_summary.get("findings", 0) or 0),
             "high_severity": int(watchdog_summary.get("high", 0) or 0),
@@ -623,6 +624,9 @@ def _matches_from_path(path: Path):
             evidence=str(item.get("evidence", "")),
             error=str(item.get("error", "")),
             checked_at=str(item.get("checked_at", "")),
+            broker_type=str(item.get("broker_type", "")),
+            search_method=str(item.get("search_method", "")),
+            action_mode=str(item.get("action_mode", "")),
         )
         for item in items
     ]

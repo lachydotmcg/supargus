@@ -120,6 +120,24 @@ def search_broker(
     timeout: float = 12.0,
 ) -> BrokerMatch:
     search_url = build_search_url(broker.search.url, identity) if broker.search.url else broker.opt_out.url
+    base = {
+        "broker_type": broker.type,
+        "search_method": broker.search.method,
+    }
+    if broker.search.method == "manual" or not broker.search.url:
+        return BrokerMatch(
+            broker_id=broker.id,
+            broker_name=broker.name,
+            status="needs_manual_review",
+            confidence="request_only",
+            score=0,
+            search_url=search_url,
+            evidence_url=broker.opt_out.url or search_url,
+            evidence="This broker does not expose a reliable public search endpoint. Treat it as request-only and use the opt-out/contact flow.",
+            action_mode="request_only",
+            **base,
+        )
+
     if not fetch:
         return BrokerMatch(
             broker_id=broker.id,
@@ -130,6 +148,8 @@ def search_broker(
             search_url=search_url,
             evidence_url=search_url,
             evidence="Search URL generated locally. Run with --fetch to attempt a lightweight page check.",
+            action_mode="public_unverified",
+            **base,
         )
 
     html, error = _fetch(search_url, timeout=timeout)
@@ -144,6 +164,8 @@ def search_broker(
             evidence_url=search_url,
             evidence="Public search could not be verified. Treat this broker as request-only unless you review it manually.",
             error=error,
+            action_mode="request_only",
+            **base,
         )
 
     score, matched, confidence = score_broker_page(html, identity)
@@ -158,6 +180,8 @@ def search_broker(
         evidence_url=search_url,
         matched_fields=matched,
         evidence=_clean_excerpt(html, _identity_needles(identity)),
+        action_mode="verified_public" if status == "possible_match" else "no_public_match",
+        **base,
     )
 
 

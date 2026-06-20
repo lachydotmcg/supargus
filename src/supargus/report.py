@@ -18,6 +18,7 @@ def write_json(data: dict[str, Any], path: str | Path) -> Path:
 
 
 def matches_payload(matches: list[BrokerMatch]) -> dict[str, Any]:
+    request_only_statuses = {"fetch_error", "needs_manual_review"}
     return {
         "generated_at": utc_now(),
         "matches": [to_dict(match) for match in matches],
@@ -25,7 +26,8 @@ def matches_payload(matches: list[BrokerMatch]) -> dict[str, Any]:
             "checked": len(matches),
             "possible_matches": sum(1 for match in matches if match.status == "possible_match"),
             "manual_review": sum(1 for match in matches if match.status == "needs_manual_review"),
-            "request_only": sum(1 for match in matches if match.status in {"fetch_error", "needs_manual_review"}),
+            "request_only": sum(1 for match in matches if match.action_mode == "request_only" or match.status in request_only_statuses),
+            "public_unverified": sum(1 for match in matches if match.action_mode == "public_unverified"),
             "verified_or_likely": sum(1 for match in matches if match.status == "possible_match" and match.score > 0),
             "errors": sum(1 for match in matches if match.status == "fetch_error"),
         },

@@ -21,7 +21,7 @@ from supargus.forms import build_form_queue, format_form_queue
 from supargus.identity import identity_from_dict, sample_identity, save_identity, load_identity
 from supargus.mailer import gmail_smtp_config, load_smtp_config, save_smtp_config
 from supargus.monitor import diff_matches, diff_payload, save_snapshot, latest_snapshot
-from supargus.models import BrokerMatch, TakedownRequest
+from supargus.models import Broker, BrokerMatch, BrokerOptOut, BrokerSearch, TakedownRequest
 from supargus.registry import load_default_brokers, validate_brokers
 from supargus.review import approved_requests, build_review_queue, update_review_status
 from supargus.schedule import cron_line, schedule_instructions, schtasks_create_command
@@ -85,6 +85,22 @@ class SupargusCoreTests(unittest.TestCase):
         matches = search_brokers(brokers, profile, fetch=False)
         self.assertEqual(len(matches), 2)
         self.assertTrue(all(match.status == "needs_manual_review" for match in matches))
+
+    def test_manual_broker_is_request_only_not_fake_scanned(self) -> None:
+        profile = sample_identity()
+        broker = Broker(
+            id="private-broker",
+            name="Private Broker",
+            type="private_database",
+            regions=["US"],
+            search=BrokerSearch(method="manual", url="", query_fields=[]),
+            opt_out=BrokerOptOut(url="https://example.com/privacy", method="form"),
+        )
+        match = search_brokers([broker], profile, fetch=True)[0]
+        self.assertEqual(match.status, "needs_manual_review")
+        self.assertEqual(match.confidence, "request_only")
+        self.assertEqual(match.action_mode, "request_only")
+        self.assertEqual(match.evidence_url, "https://example.com/privacy")
 
     def test_prepare_requests_writes_manifest(self) -> None:
         profile = sample_identity()

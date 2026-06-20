@@ -55,23 +55,28 @@ DESKTOP_ACTIONS: tuple[tuple[str, str, str], ...] = (
 
 
 COLORS = {
-    "bg": "#f4f6fb",
+    "bg": "#f3f6fb",
     "surface": "#ffffff",
     "surface_alt": "#f8fafc",
     "nav": "#ffffff",
     "line": "#e4e9f2",
-    "ink": "#111827",
+    "line_strong": "#ccd6e2",
+    "ink": "#0b1622",
     "muted": "#64748b",
-    "soft": "#eef3f9",
-    "navy": "#101923",
-    "blue": "#101923",
-    "blue_dark": "#243447",
+    "soft": "#edf2f8",
+    "navy": "#0b1622",
+    "blue": "#132235",
+    "blue_dark": "#0b1622",
     "yellow": "#f6b40b",
-    "yellow_soft": "#fff6d8",
-    "green": "#16a34a",
-    "green_soft": "#eaf8ef",
+    "yellow_dark": "#a86500",
+    "yellow_soft": "#fff5cf",
+    "green": "#11854d",
+    "green_soft": "#e9f8ef",
     "red": "#b42318",
     "red_soft": "#fff0ed",
+    "orange": "#d97706",
+    "orange_soft": "#fff3df",
+    "shadow": "#d8e0ea",
 }
 
 
@@ -120,6 +125,31 @@ def _score_label(score: int) -> tuple[str, str]:
     return "Action needed", COLORS["red"]
 
 
+def _friendly_mode(item: dict[str, Any]) -> str:
+    mode = str(item.get("action_mode") or "")
+    status = str(item.get("status") or "")
+    if mode == "verified_public" or status == "possible_match":
+        return "Verified public hit"
+    if mode == "request_only" or status in {"needs_manual_review", "fetch_error"}:
+        return "Request-only"
+    if mode == "public_unverified":
+        return "Public search queued"
+    if mode == "no_public_match" or status == "no_obvious_match":
+        return "No public hit"
+    return mode.replace("_", " ").title() if mode else "Review"
+
+
+def _mode_color(item: dict[str, Any]) -> tuple[str, str]:
+    mode = _friendly_mode(item)
+    if mode == "Verified public hit":
+        return COLORS["green_soft"], COLORS["green"]
+    if mode == "Request-only":
+        return COLORS["yellow_soft"], COLORS["yellow_dark"]
+    if mode == "No public hit":
+        return COLORS["soft"], COLORS["muted"]
+    return COLORS["orange_soft"], COLORS["orange"]
+
+
 class SupargusDesktop:
     def __init__(self, root: "tk.Tk", workspace: str | Path) -> None:
         self.root = root
@@ -148,8 +178,12 @@ class SupargusDesktop:
             "matches": tk.StringVar(value="0"),
             "watchdog": tk.StringVar(value="0"),
             "request_only": tk.StringVar(value="0"),
+            "public_unverified": tk.StringVar(value="0"),
+            "verified": tk.StringVar(value="0"),
             "action_items": tk.StringVar(value="0"),
+            "review_pending": tk.StringVar(value="0"),
             "review_approved": tk.StringVar(value="0"),
+            "form_tasks": tk.StringVar(value="0"),
             "changes": tk.StringVar(value="0"),
             "requests": tk.StringVar(value="0"),
             "bundle": tk.StringVar(value="0 B"),
@@ -280,7 +314,7 @@ class SupargusDesktop:
             button.configure(bg=COLORS["yellow_soft"] if selected else COLORS["nav"], fg=COLORS["blue"] if selected else COLORS["muted"])
 
     def _card(self, parent: "tk.Widget", row: int, column: int, *, columnspan: int = 1, rowspan: int = 1, padx=(0, 14), pady=(0, 14)) -> "tk.Frame":
-        frame = tk.Frame(parent, bg=COLORS["surface"], highlightbackground=COLORS["line"], highlightthickness=1)
+        frame = tk.Frame(parent, bg=COLORS["surface"], highlightbackground=COLORS["line_strong"], highlightthickness=1)
         frame.grid(row=row, column=column, columnspan=columnspan, rowspan=rowspan, sticky="nsew", padx=padx, pady=pady)
         return frame
 
@@ -301,12 +335,39 @@ class SupargusDesktop:
             activeforeground=fg,
             relief="flat",
             bd=0,
+            highlightthickness=1,
+            highlightbackground=bg,
             padx=18,
             pady=9,
             cursor="hand2",
             font=("Segoe UI", 10, "bold"),
         )
         return button
+
+    def _pill(self, parent: "tk.Widget", text: str, *, bg: str, fg: str) -> "tk.Label":
+        return tk.Label(parent, text=text, bg=bg, fg=fg, padx=10, pady=4, font=("Segoe UI", 9, "bold"))
+
+    def _metric_tile(self, parent: "tk.Widget", row: int, column: int, label: str, variable: "tk.StringVar", detail: str) -> None:
+        tile = tk.Frame(parent, bg=COLORS["surface"], highlightbackground=COLORS["line"], highlightthickness=1)
+        tile.grid(row=row, column=column, sticky="nsew", padx=(0, 10), pady=(0, 10))
+        tk.Label(tile, text=label, bg=COLORS["surface"], fg=COLORS["muted"], font=("Segoe UI", 9, "bold")).pack(anchor="w", padx=14, pady=(12, 0))
+        tk.Label(tile, textvariable=variable, bg=COLORS["surface"], fg=COLORS["ink"], font=("Segoe UI", 21, "bold")).pack(anchor="w", padx=14)
+        tk.Label(tile, text=detail, bg=COLORS["surface"], fg=COLORS["muted"], font=("Segoe UI", 9), wraplength=160, justify="left").pack(anchor="w", padx=14, pady=(0, 12))
+
+    def _insight_card(self, parent: "tk.Widget", title: str, body: str, mode: str) -> "tk.Frame":
+        bg, fg = {
+            "verified": (COLORS["green_soft"], COLORS["green"]),
+            "request": (COLORS["yellow_soft"], COLORS["yellow_dark"]),
+            "local": (COLORS["soft"], COLORS["blue"]),
+        }.get(mode, (COLORS["surface_alt"], COLORS["muted"]))
+        card = tk.Frame(parent, bg=COLORS["surface"], highlightbackground=COLORS["line"], highlightthickness=1)
+        card.columnconfigure(1, weight=1)
+        marker = tk.Frame(card, width=6, bg=fg)
+        marker.grid(row=0, column=0, rowspan=2, sticky="nsw")
+        self._pill(card, mode.upper(), bg=bg, fg=fg).grid(row=0, column=1, sticky="w", padx=14, pady=(12, 4))
+        tk.Label(card, text=title, bg=COLORS["surface"], fg=COLORS["ink"], font=("Segoe UI", 11, "bold")).grid(row=1, column=1, sticky="w", padx=14)
+        tk.Label(card, text=body, bg=COLORS["surface"], fg=COLORS["muted"], font=("Segoe UI", 9), wraplength=230, justify="left").grid(row=2, column=1, sticky="w", padx=14, pady=(4, 12))
+        return card
 
     def _build_home_page(self) -> None:
         page = self._page("home")
@@ -316,10 +377,10 @@ class SupargusDesktop:
 
         header = tk.Frame(page, bg=COLORS["bg"])
         header.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 18))
-        tk.Label(header, text="Your privacy, in plain English.", bg=COLORS["bg"], fg=COLORS["ink"], font=("Segoe UI", 25, "bold")).pack(anchor="w")
+        tk.Label(header, text="Privacy protection you can actually inspect.", bg=COLORS["bg"], fg=COLORS["ink"], font=("Segoe UI", 24, "bold")).pack(anchor="w")
         tk.Label(
             header,
-            text="Scan data brokers, prepare removals, and check this PC without handing your identity to another service.",
+            text="Scan public broker pages, prepare request-only removals, and check this PC without handing your identity to another service.",
             bg=COLORS["bg"],
             fg=COLORS["muted"],
             font=("Segoe UI", 11),
@@ -334,12 +395,25 @@ class SupargusDesktop:
         score_card = self._card(left, 0, 0, columnspan=2, padx=(0, 14))
         score_card.columnconfigure(0, weight=1)
         score_card.columnconfigure(1, weight=1)
-        tk.Label(score_card, text="Privacy score", bg=COLORS["surface"], fg=COLORS["muted"], font=("Segoe UI", 10, "bold")).grid(row=0, column=0, sticky="w", padx=24, pady=(20, 0))
+        tk.Label(score_card, text="Protection overview", bg=COLORS["surface"], fg=COLORS["muted"], font=("Segoe UI", 10, "bold")).grid(row=0, column=0, sticky="w", padx=24, pady=(20, 0))
         tk.Label(score_card, textvariable=self.metric_vars["score"], bg=COLORS["surface"], fg=COLORS["ink"], font=("Segoe UI", 50, "bold")).grid(row=1, column=0, sticky="w", padx=24)
         self.score_label_widget = tk.Label(score_card, textvariable=self.metric_vars["score_label"], bg=COLORS["surface"], fg=COLORS["green"], font=("Segoe UI", 16, "bold"))
         self.score_label_widget.grid(row=2, column=0, sticky="w", padx=24, pady=(0, 20))
         self.score_canvas = tk.Canvas(score_card, width=250, height=150, bg=COLORS["surface"], highlightthickness=0)
         self.score_canvas.grid(row=0, column=1, rowspan=3, sticky="e", padx=24, pady=18)
+
+        proof = tk.Frame(score_card, bg=COLORS["surface"])
+        proof.grid(row=3, column=0, columnspan=2, sticky="ew", padx=20, pady=(0, 20))
+        for idx in range(3):
+            proof.columnconfigure(idx, weight=1)
+        for idx, (title, body, mode) in enumerate(
+            (
+                ("Public people-search hits", "Supargus checks pages it can reach and shows the evidence it found.", "verified"),
+                ("Private broker databases", "When a broker cannot be searched, the app creates a request-only removal path.", "request"),
+                ("This PC checks", "Proxy and bandwidth-sharing signals are local findings for you to review.", "local"),
+            )
+        ):
+            self._insight_card(proof, title, body, mode).grid(row=0, column=idx, sticky="nsew", padx=(0 if idx == 0 else 8, 0))
 
         self._home_action(left, 1, 0, "Scan exposure", "Check data brokers and people-search sites.", "broker_scan", "Scan now", primary=True)
         self._home_action(left, 1, 1, "Prepare removals", "Create request drafts you can inspect.", "prepare_requests", "Prepare")
@@ -360,10 +434,13 @@ class SupargusDesktop:
         metrics = tk.Frame(advisor, bg=COLORS["surface"])
         metrics.pack(fill="x", padx=22, pady=(4, 20))
         for label, var in (
-            ("Possible matches", self.metric_vars["matches"]),
+            ("Verified public hits", self.metric_vars["verified"]),
             ("Request-only brokers", self.metric_vars["request_only"]),
-            ("Action plan", self.metric_vars["action_items"]),
+            ("Public searches to review", self.metric_vars["public_unverified"]),
+            ("Pending approvals", self.metric_vars["review_pending"]),
             ("Approved sends", self.metric_vars["review_approved"]),
+            ("Manual form tasks", self.metric_vars["form_tasks"]),
+            ("Action plan", self.metric_vars["action_items"]),
             ("Watchdog findings", self.metric_vars["watchdog"]),
             ("Draft requests", self.metric_vars["requests"]),
             ("Evidence bundle", self.metric_vars["bundle"]),
@@ -460,7 +537,7 @@ class SupargusDesktop:
     def _build_cleanup_page(self) -> None:
         page = self._page("cleanup")
         page.columnconfigure(0, weight=1)
-        page.rowconfigure(2, weight=1)
+        page.rowconfigure(3, weight=1)
         self._section_header(page, "Data broker cleanup", "See likely exposure, then create removal drafts you can review.")
 
         actions = tk.Frame(page, bg=COLORS["bg"])
@@ -478,10 +555,23 @@ class SupargusDesktop:
             button.pack(side="left", padx=(0, 10))
             self.buttons.append(button)
 
-        table_card = self._card(page, 2, 0, padx=(0, 0))
+        explain = tk.Frame(page, bg=COLORS["bg"])
+        explain.grid(row=2, column=0, sticky="ew", pady=(0, 12))
+        for idx in range(3):
+            explain.columnconfigure(idx, weight=1)
+        for idx, (title, body, mode) in enumerate(
+            (
+                ("Verified public hit", "The page returned identifiers that match your profile.", "verified"),
+                ("Request-only", "The broker is private, blocked, or manual. Prepare an opt-out request.", "request"),
+                ("No public hit", "No obvious result came back from the reachable page.", "local"),
+            )
+        ):
+            self._insight_card(explain, title, body, mode).grid(row=0, column=idx, sticky="nsew", padx=(0 if idx == 0 else 10, 0))
+
+        table_card = self._card(page, 3, 0, padx=(0, 0))
         table_card.rowconfigure(0, weight=1)
         table_card.columnconfigure(0, weight=1)
-        self.broker_tree = self._tree(table_card, ("broker", "status", "confidence", "score", "url"))
+        self.broker_tree = self._tree(table_card, ("broker", "action", "status", "confidence", "score", "url"))
 
     def _build_watchdog_page(self) -> None:
         page = self._page("watchdog")
@@ -560,10 +650,16 @@ class SupargusDesktop:
     def _build_review_panel(self, page: "tk.Frame") -> None:
         card = self._card(page, 2, 0)
         card.columnconfigure(0, weight=1)
-        card.rowconfigure(2, weight=1)
+        card.rowconfigure(3, weight=1)
         tk.Label(card, text="Review queue", bg=COLORS["surface"], fg=COLORS["ink"], font=("Segoe UI", 14, "bold")).grid(row=0, column=0, sticky="w", padx=18, pady=(16, 0))
+        summary = tk.Frame(card, bg=COLORS["surface"])
+        summary.grid(row=1, column=0, sticky="ew", padx=18, pady=(10, 0))
+        self._pill(summary, "Pending", bg=COLORS["yellow_soft"], fg=COLORS["yellow_dark"]).pack(side="left")
+        tk.Label(summary, textvariable=self.metric_vars["review_pending"], bg=COLORS["surface"], fg=COLORS["ink"], font=("Segoe UI", 10, "bold")).pack(side="left", padx=(6, 14))
+        self._pill(summary, "Approved", bg=COLORS["green_soft"], fg=COLORS["green"]).pack(side="left")
+        tk.Label(summary, textvariable=self.metric_vars["review_approved"], bg=COLORS["surface"], fg=COLORS["ink"], font=("Segoe UI", 10, "bold")).pack(side="left", padx=(6, 0))
         controls = tk.Frame(card, bg=COLORS["surface"])
-        controls.grid(row=1, column=0, sticky="ew", padx=18, pady=12)
+        controls.grid(row=2, column=0, sticky="ew", padx=18, pady=12)
         for text, command, primary in (
             ("Approve", self._approve_selected_review, True),
             ("Skip", self._skip_selected_review, False),
@@ -571,7 +667,7 @@ class SupargusDesktop:
         ):
             self._button(controls, text, command, primary=primary).pack(side="left", padx=(0, 8))
         body = tk.Frame(card, bg=COLORS["surface"])
-        body.grid(row=2, column=0, sticky="nsew", padx=18, pady=(0, 18))
+        body.grid(row=3, column=0, sticky="nsew", padx=18, pady=(0, 18))
         body.columnconfigure(0, weight=1)
         body.rowconfigure(0, weight=1)
         self.review_tree = self._tree(body, ("status", "broker", "delivery", "destination"))
@@ -623,10 +719,23 @@ class SupargusDesktop:
             self._button(parent, "Browse", browse).grid(row=row, column=2, sticky="e", padx=(0, 18), pady=(12, 0))
 
     def _tree(self, parent: "tk.Widget", columns: tuple[str, ...]) -> "ttk.Treeview":
-        tree = ttk.Treeview(parent, columns=columns, show="headings")
+        tree = ttk.Treeview(parent, columns=columns, show="headings", selectmode="browse")
+        widths = {
+            "broker": 190,
+            "action": 165,
+            "status": 120,
+            "confidence": 110,
+            "score": 70,
+            "url": 280,
+            "destination": 260,
+            "next_step": 360,
+            "title": 260,
+            "request_id": 155,
+            "next_follow_up": 180,
+        }
         for column in columns:
             tree.heading(column, text=column.replace("_", " ").title())
-            tree.column(column, width=150, anchor="w")
+            tree.column(column, width=widths.get(column, 150), anchor="w", stretch=True)
         ybar = ttk.Scrollbar(parent, orient="vertical", command=tree.yview)
         tree.configure(yscrollcommand=ybar.set)
         tree.grid(row=0, column=0, sticky="nsew")
@@ -697,8 +806,12 @@ class SupargusDesktop:
         self.metric_vars["brokers"].set(str(summary["brokers_checked"]))
         self.metric_vars["matches"].set(str(summary["possible_matches"]))
         self.metric_vars["request_only"].set(str(summary.get("request_only", 0)))
+        self.metric_vars["public_unverified"].set(str(summary.get("public_unverified", 0)))
+        self.metric_vars["verified"].set(str(summary.get("verified_or_likely", 0)))
         self.metric_vars["action_items"].set(str(summary.get("action_items", 0)))
+        self.metric_vars["review_pending"].set(str(summary.get("review_pending", 0)))
         self.metric_vars["review_approved"].set(str(summary.get("review_approved", 0)))
+        self.metric_vars["form_tasks"].set(str(summary.get("form_tasks", 0)))
         self.metric_vars["watchdog"].set(str(summary["watchdog_findings"]))
         self.metric_vars["changes"].set(str(summary["scan_changes"]))
         self.metric_vars["requests"].set(str(summary["request_drafts"]))
@@ -733,9 +846,21 @@ class SupargusDesktop:
         matches = int(summary.get("possible_matches", 0) or 0)
         requests = int(summary.get("request_drafts", 0) or 0)
         findings = int(summary.get("watchdog_findings", 0) or 0)
-        if matches and not requests:
+        pending = int(summary.get("review_pending", 0) or 0)
+        forms = int(summary.get("form_tasks", 0) or 0)
+        request_only = int(summary.get("request_only", 0) or 0)
+        if pending:
+            title = "Approve or skip drafts"
+            body = "Removal drafts are ready. Open Removals, inspect each destination, then approve only the requests you want sent."
+        elif forms:
+            title = "Finish manual forms"
+            body = "Some brokers require browser forms. Open each form, paste the prepared request, and mark it submitted."
+        elif matches and not requests:
             title = "Prepare removal drafts"
             body = "Supargus found possible broker exposure. Create drafts first, then review before sending anything."
+        elif request_only:
+            title = "Send request-only opt-outs"
+            body = "Some brokers cannot be searched directly. Supargus can still prepare removal requests you control."
         elif findings:
             title = "Review this PC"
             body = "The watchdog found local signals worth checking. These are review-only findings, not automatic accusations."
@@ -751,10 +876,21 @@ class SupargusDesktop:
     def _populate_brokers(self, items: list[dict[str, Any]]) -> None:
         self._clear_tree(self.broker_tree)
         if not items:
-            self.broker_tree.insert("", "end", values=("No broker scan yet", "Run Scan brokers", "", "", ""))
+            self.broker_tree.insert("", "end", values=("No broker scan yet", "Run Scan brokers", "", "", "", ""))
             return
         for item in items:
-            self.broker_tree.insert("", "end", values=(item.get("broker_name", ""), item.get("status", ""), item.get("confidence", ""), item.get("score", ""), item.get("search_url", "")))
+            self.broker_tree.insert(
+                "",
+                "end",
+                values=(
+                    item.get("broker_name", ""),
+                    _friendly_mode(item),
+                    item.get("status", ""),
+                    item.get("confidence", ""),
+                    item.get("score", ""),
+                    item.get("search_url", ""),
+                ),
+            )
 
     def _populate_watchdog(self, items: list[dict[str, Any]]) -> None:
         self.watchdog_text.configure(state="normal")
