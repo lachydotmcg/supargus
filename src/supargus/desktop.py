@@ -15,7 +15,7 @@ from typing import Any
 from .app import build_state, run_action
 from .custom import add_custom_target, load_custom_targets, prepare_custom_requests, update_custom_status
 from .forms import FormTask, load_form_queue, update_form_status
-from .identity import load_identity, sample_identity, save_identity
+from .identity import identity_from_dict, load_identity, sample_identity, save_identity
 
 try:  # Keep imports optional so headless test environments can still import the package.
     import tkinter as tk
@@ -193,11 +193,24 @@ class SupargusDesktop:
             "score_label": tk.StringVar(value="Protected"),
         }
 
+        self.setup_vars = {
+            "full_name": tk.StringVar(),
+            "aliases": tk.StringVar(),
+            "emails": tk.StringVar(),
+            "usernames": tk.StringVar(),
+            "phones": tk.StringVar(),
+            "address": tk.StringVar(),
+            "city": tk.StringVar(),
+            "region": tk.StringVar(),
+            "country": tk.StringVar(),
+            "jurisdiction": tk.StringVar(),
+        }
+
         self._configure_window()
         self._load_logo()
         self._build_layout()
         self.refresh()
-        self.show_page("home")
+        self._pick_start_page()
         self.root.after(100, self._drain_queue)
 
     def _configure_window(self) -> None:
@@ -243,6 +256,7 @@ class SupargusDesktop:
         self.content.columnconfigure(0, weight=1)
         self.content.rowconfigure(0, weight=1)
 
+        self._build_setup_page()
         self._build_home_page()
         self._build_guide_page()
         self._build_cleanup_page()
@@ -302,14 +316,41 @@ class SupargusDesktop:
             self.nav_buttons[key] = button
 
     def _page(self, key: str) -> "tk.Frame":
-        page = tk.Frame(self.content, bg=COLORS["bg"])
-        page.grid(row=0, column=0, sticky="nsew")
-        page.columnconfigure(0, weight=1)
-        page.rowconfigure(0, weight=1)
-        self.pages[key] = page
-        return page
+        """Create a scrollable page container. Returns the inner scrollable frame."""
+        outer = tk.Frame(self.content, bg=COLORS["bg"])
+        outer.grid(row=0, column=0, sticky="nsew")
+        outer.columnconfigure(0, weight=1)
+        outer.rowconfigure(0, weight=1)
+
+        canvas = tk.Canvas(outer, bg=COLORS["bg"], highlightthickness=0, bd=0)
+        vbar = ttk.Scrollbar(outer, orient="vertical", command=canvas.yview)
+        canvas.configure(yscrollcommand=vbar.set)
+        canvas.grid(row=0, column=0, sticky="nsew")
+        vbar.grid(row=0, column=1, sticky="ns")
+
+        inner = tk.Frame(canvas, bg=COLORS["bg"])
+        inner.columnconfigure(0, weight=1)
+
+        window_id = canvas.create_window((0, 0), window=inner, anchor="nw")
+
+        def _on_configure(_event=None):
+            canvas.configure(scrollregion=canvas.bbox("all"))
+            canvas.itemconfig(window_id, width=canvas.winfo_width())
+
+        inner.bind("<Configure>", _on_configure)
+        canvas.bind("<Configure>", _on_configure)
+
+        def _on_mousewheel(event):
+            canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+
+        canvas.bind_all("<MouseWheel>", _on_mousewheel)
+
+        self.pages[key] = outer
+        return inner
 
     def show_page(self, key: str) -> None:
+        if key not in self.pages:
+            return
         self.pages[key].tkraise()
         for name, button in self.nav_buttons.items():
             selected = name == key
@@ -371,41 +412,183 @@ class SupargusDesktop:
         tk.Label(card, text=body, bg=COLORS["surface"], fg=COLORS["muted"], font=("Segoe UI", 9), wraplength=230, justify="left").grid(row=2, column=1, sticky="w", padx=14, pady=(4, 12))
         return card
 
+    def _identity_exists(self) -> bool:
+        """Return True if a usable identity file is present."""
+        p = Path(self.identity_var.get())
+        if p.exists():
+            return True
+        # Also accept workspace/identity.json as a fallback
+        alt = Path(self.workspace_var.get()) / "identity.json"
+        return alt.exists()
+
+    def _pick_start_page(self) -> None:
+        if self._identity_exists():
+            self.show_page("home")
+        else:
+            self.show_page("setup")
+
+    def _build_setup_page(self) -> None:
+        page = self._page("setup")
+        page.columnconfigure(0, weight=1)
+
+        header = tk.Frame(page, bg=COLORS["bg"])
+        header.grid(row=0, column=0, sticky="ew", pady=(0, 12))
+        tk.Label(header, text="Create your privacy profile", bg=COLORS["bg"], fg=COLORS["ink"], font=("Segoe UI", 22, "bold")).pack(anchor="w")
+        tk.Label(
+            header,
+            text="Supargus uses this profile to search for your exposure across people-search sites and data brokers. Nothing is sent anywhere without your review.",
+            bg=COLORS["bg"],
+            fg=COLORS["muted"],
+            font=("Segoe UI", 11),
+            wraplength=700,
+            justify="left",
+        ).pack(anchor="w", pady=(4, 0))
+
+        card = tk.Frame(page, bg=COLORS["surface"], highlightbackground=COLORS["line_strong"], highlightthickness=1)
+        card.grid(row=1, column=0, sticky="ew", pady=(0, 14))
+        card.columnconfigure(1, weight=1)
+
+        fields = [
+            ("full_name", "Full name", "Your full legal name"),
+            ("aliases", "Aliases", "Other names, maiden names, nicknames — comma-separated"),
+            ("emails", "Email addresses", "All email addresses — comma-separated"),
+            ("usernames", "Usernames", "Forum handles, social usernames — comma-separated"),
+            ("phones", "Phone numbers", "Include country code e.g. +15551234567 — comma-separated"),
+            ("address", "Street address", "House number and street name"),
+            ("city", "City", ""),
+            ("region", "State / Province", ""),
+            ("country", "Country", "2-letter code e.g. US, AU, GB"),
+            ("jurisdiction", "Jurisdiction", "Privacy law that applies, e.g. US-CA, AU, EU-GDPR"),
+        ]
+
+        for idx, (key, label, hint) in enumerate(fields):
+            tk.Label(card, text=label, bg=COLORS["surface"], fg=COLORS["muted"], font=("Segoe UI", 9, "bold")).grid(
+                row=idx, column=0, sticky="w", padx=22, pady=(14 if idx == 0 else 8, 0)
+            )
+            entry = tk.Entry(card, textvariable=self.setup_vars[key], relief="solid", bd=1, font=("Segoe UI", 10))
+            entry.grid(row=idx, column=1, sticky="ew", padx=(8, 22), pady=(14 if idx == 0 else 8, 0), ipady=6)
+            if hint:
+                tk.Label(card, text=hint, bg=COLORS["surface"], fg=COLORS["muted"], font=("Segoe UI", 8)).grid(
+                    row=idx, column=2, sticky="w", padx=(0, 22), pady=(14 if idx == 0 else 8, 0)
+                )
+
+        buttons = tk.Frame(card, bg=COLORS["surface"])
+        buttons.grid(row=len(fields), column=0, columnspan=3, sticky="w", padx=22, pady=18)
+        save_btn = self._button(buttons, "Save profile", self._save_setup_profile, primary=True)
+        save_btn.pack(side="left", padx=(0, 12))
+        self._button(buttons, "Skip for now", lambda: self.show_page("home")).pack(side="left")
+
+        self.setup_status = tk.Label(card, text="", bg=COLORS["surface"], fg=COLORS["green"], font=("Segoe UI", 10))
+        self.setup_status.grid(row=len(fields) + 1, column=0, columnspan=3, sticky="w", padx=22, pady=(0, 12))
+
+    def _save_setup_profile(self) -> None:
+        def _split(val: str) -> list[str]:
+            return [v.strip() for v in val.split(",") if v.strip()]
+
+        from .models import Address
+
+        v = self.setup_vars
+        addresses = []
+        if v["address"].get().strip() or v["city"].get().strip():
+            addresses.append(
+                Address(
+                    line1=v["address"].get().strip(),
+                    city=v["city"].get().strip(),
+                    region=v["region"].get().strip(),
+                    country=v["country"].get().strip(),
+                )
+            )
+
+        data = {
+            "full_name": v["full_name"].get().strip(),
+            "aliases": _split(v["aliases"].get()),
+            "emails": _split(v["emails"].get()),
+            "usernames": _split(v["usernames"].get()),
+            "phones": _split(v["phones"].get()),
+            "addresses": [{"line1": a.line1, "city": a.city, "region": a.region, "country": a.country} for a in addresses],
+            "jurisdiction": v["jurisdiction"].get().strip(),
+        }
+
+        if not data["full_name"]:
+            if messagebox:
+                messagebox.showerror("Supargus", "Full name is required.")
+            return
+
+        try:
+            profile = identity_from_dict(data)
+            out_path = Path(self.workspace_var.get()) / "identity.json"
+            out_path.parent.mkdir(parents=True, exist_ok=True)
+            save_identity(profile, out_path, force=True)
+            self.identity_var.set(str(out_path))
+            if hasattr(self, "setup_status"):
+                self.setup_status.configure(text=f"Saved to {out_path}", fg=COLORS["green"])
+            self._log(f"Identity saved to {out_path}")
+            self.refresh()
+            self.show_page("home")
+        except Exception as exc:
+            if messagebox:
+                messagebox.showerror("Supargus", str(exc))
+            self._log(f"Could not save identity:\n{exc}")
+
     def _build_home_page(self) -> None:
         page = self._page("home")
         page.columnconfigure(0, weight=2)
         page.columnconfigure(1, weight=1)
-        page.rowconfigure(1, weight=1)
 
         header = tk.Frame(page, bg=COLORS["bg"])
-        header.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 18))
-        tk.Label(header, text="Privacy protection you can actually inspect.", bg=COLORS["bg"], fg=COLORS["ink"], font=("Segoe UI", 24, "bold")).pack(anchor="w")
+        header.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 14))
+        tk.Label(header, text="Privacy protection you can actually inspect.", bg=COLORS["bg"], fg=COLORS["ink"], font=("Segoe UI", 22, "bold")).pack(anchor="w")
         tk.Label(
             header,
             text="Scan public broker pages, prepare request-only removals, and check this PC without handing your identity to another service.",
             bg=COLORS["bg"],
             fg=COLORS["muted"],
             font=("Segoe UI", 11),
+            wraplength=720,
+            justify="left",
         ).pack(anchor="w", pady=(4, 0))
 
-        left = tk.Frame(page, bg=COLORS["bg"])
-        left.grid(row=1, column=0, sticky="nsew")
+        # Empty state — shown when no identity exists
+        self.home_empty = tk.Frame(page, bg=COLORS["bg"])
+        self.home_empty.grid(row=1, column=0, columnspan=2, sticky="nsew")
+        empty_card = tk.Frame(self.home_empty, bg=COLORS["surface"], highlightbackground=COLORS["line_strong"], highlightthickness=1)
+        empty_card.pack(fill="x", pady=(8, 0))
+        empty_card.columnconfigure(0, weight=1)
+        tk.Label(empty_card, text="Get started", bg=COLORS["surface"], fg=COLORS["ink"], font=("Segoe UI", 17, "bold")).pack(anchor="w", padx=24, pady=(22, 4))
+        tk.Label(
+            empty_card,
+            text="Create a privacy profile so Supargus knows what to search for. Your data stays on this machine.",
+            bg=COLORS["surface"],
+            fg=COLORS["muted"],
+            font=("Segoe UI", 11),
+            wraplength=560,
+            justify="left",
+        ).pack(anchor="w", padx=24, pady=(0, 16))
+        self._button(empty_card, "Create your privacy profile", lambda: self.show_page("setup"), primary=True).pack(anchor="w", padx=24, pady=(0, 22))
+
+        # Main content — hidden until identity exists
+        self.home_main = tk.Frame(page, bg=COLORS["bg"])
+        self.home_main.grid(row=2, column=0, columnspan=2, sticky="nsew")
+        self.home_main.columnconfigure(0, weight=2)
+        self.home_main.columnconfigure(1, weight=1)
+
+        left = tk.Frame(self.home_main, bg=COLORS["bg"])
+        left.grid(row=0, column=0, sticky="nsew")
         left.columnconfigure(0, weight=1)
         left.columnconfigure(1, weight=1)
-        left.rowconfigure(2, weight=1)
 
         score_card = self._card(left, 0, 0, columnspan=2, padx=(0, 14))
         score_card.columnconfigure(0, weight=1)
         score_card.columnconfigure(1, weight=1)
-        tk.Label(score_card, text="Protection overview", bg=COLORS["surface"], fg=COLORS["muted"], font=("Segoe UI", 10, "bold")).grid(row=0, column=0, sticky="w", padx=24, pady=(20, 0))
-        tk.Label(score_card, textvariable=self.metric_vars["score"], bg=COLORS["surface"], fg=COLORS["ink"], font=("Segoe UI", 50, "bold")).grid(row=1, column=0, sticky="w", padx=24)
-        self.score_label_widget = tk.Label(score_card, textvariable=self.metric_vars["score_label"], bg=COLORS["surface"], fg=COLORS["green"], font=("Segoe UI", 16, "bold"))
-        self.score_label_widget.grid(row=2, column=0, sticky="w", padx=24, pady=(0, 20))
-        self.score_canvas = tk.Canvas(score_card, width=250, height=150, bg=COLORS["surface"], highlightthickness=0)
-        self.score_canvas.grid(row=0, column=1, rowspan=3, sticky="e", padx=24, pady=18)
+        tk.Label(score_card, text="Protection overview", bg=COLORS["surface"], fg=COLORS["muted"], font=("Segoe UI", 10, "bold")).grid(row=0, column=0, sticky="w", padx=24, pady=(16, 0))
+        tk.Label(score_card, textvariable=self.metric_vars["score"], bg=COLORS["surface"], fg=COLORS["ink"], font=("Segoe UI", 44, "bold")).grid(row=1, column=0, sticky="w", padx=24)
+        self.score_label_widget = tk.Label(score_card, textvariable=self.metric_vars["score_label"], bg=COLORS["surface"], fg=COLORS["green"], font=("Segoe UI", 14, "bold"))
+        self.score_label_widget.grid(row=2, column=0, sticky="w", padx=24, pady=(0, 16))
+        self.score_canvas = tk.Canvas(score_card, width=220, height=130, bg=COLORS["surface"], highlightthickness=0)
+        self.score_canvas.grid(row=0, column=1, rowspan=3, sticky="e", padx=20, pady=14)
 
         proof = tk.Frame(score_card, bg=COLORS["surface"])
-        proof.grid(row=3, column=0, columnspan=2, sticky="ew", padx=20, pady=(0, 20))
+        proof.grid(row=3, column=0, columnspan=2, sticky="ew", padx=16, pady=(0, 16))
         for idx in range(3):
             proof.columnconfigure(idx, weight=1)
         for idx, (title, body, mode) in enumerate(
@@ -422,19 +605,19 @@ class SupargusDesktop:
         self._home_action(left, 2, 0, "Scan this PC", "Find proxy and bandwidth-sharing signals.", "watchdog", "Scan PC")
         self._home_action(left, 2, 1, "Export receipts", "Bundle reports, drafts, and hashes.", "bundle", "Export")
 
-        advisor = self._card(page, 1, 1, padx=(0, 0))
+        advisor = self._card(self.home_main, 0, 1, padx=(0, 0))
         advisor.columnconfigure(0, weight=1)
-        tk.Label(advisor, text="Trusted advisor", bg=COLORS["surface"], fg=COLORS["muted"], font=("Segoe UI", 10, "bold")).pack(anchor="w", padx=22, pady=(20, 4))
-        self.next_step_title = tk.Label(advisor, text="Run a privacy check", bg=COLORS["surface"], fg=COLORS["ink"], font=("Segoe UI", 16, "bold"), wraplength=270, justify="left")
+        tk.Label(advisor, text="Trusted advisor", bg=COLORS["surface"], fg=COLORS["muted"], font=("Segoe UI", 10, "bold")).pack(anchor="w", padx=22, pady=(16, 4))
+        self.next_step_title = tk.Label(advisor, text="Run a privacy check", bg=COLORS["surface"], fg=COLORS["ink"], font=("Segoe UI", 15, "bold"), wraplength=250, justify="left")
         self.next_step_title.pack(anchor="w", padx=22)
-        self.next_step_body = tk.Label(advisor, text="", bg=COLORS["surface"], fg=COLORS["muted"], font=("Segoe UI", 10), wraplength=280, justify="left")
-        self.next_step_body.pack(anchor="w", padx=22, pady=(8, 18))
+        self.next_step_body = tk.Label(advisor, text="", bg=COLORS["surface"], fg=COLORS["muted"], font=("Segoe UI", 10), wraplength=260, justify="left")
+        self.next_step_body.pack(anchor="w", padx=22, pady=(6, 14))
         workflow_button = self._button(advisor, "Run full privacy check", lambda: self.run_action("workflow"), primary=True)
-        workflow_button.pack(anchor="w", padx=22, pady=(0, 16))
+        workflow_button.pack(anchor="w", padx=22, pady=(0, 14))
         self.buttons.append(workflow_button)
 
         metrics = tk.Frame(advisor, bg=COLORS["surface"])
-        metrics.pack(fill="x", padx=22, pady=(4, 20))
+        metrics.pack(fill="x", padx=22, pady=(4, 16))
         for label, var in (
             ("Verified public hits", self.metric_vars["verified"]),
             ("Request-only brokers", self.metric_vars["request_only"]),
@@ -448,7 +631,7 @@ class SupargusDesktop:
             ("Evidence bundle", self.metric_vars["bundle"]),
         ):
             row = tk.Frame(metrics, bg=COLORS["surface"])
-            row.pack(fill="x", pady=6)
+            row.pack(fill="x", pady=4)
             tk.Label(row, text=label, bg=COLORS["surface"], fg=COLORS["muted"], font=("Segoe UI", 10)).pack(side="left")
             tk.Label(row, textvariable=var, bg=COLORS["surface"], fg=COLORS["ink"], font=("Segoe UI", 10, "bold")).pack(side="right")
 
@@ -815,6 +998,15 @@ class SupargusDesktop:
         score = _privacy_score(summary)
         label, label_color = _score_label(score)
 
+        # Toggle empty / main home state
+        if hasattr(self, "home_empty") and hasattr(self, "home_main"):
+            if self._identity_exists():
+                self.home_empty.grid_remove()
+                self.home_main.grid()
+            else:
+                self.home_main.grid_remove()
+                self.home_empty.grid()
+
         self.metric_vars["brokers"].set(str(summary["brokers_checked"]))
         self.metric_vars["matches"].set(str(summary["possible_matches"]))
         self.metric_vars["request_only"].set(str(summary.get("request_only", 0)))
@@ -887,7 +1079,7 @@ class SupargusDesktop:
         self.next_step_body.configure(text=body)
 
     def _guide_step_state(self, summary: dict[str, Any]) -> dict[str, str]:
-        identity_exists = Path(self.identity_var.get()).exists()
+        identity_exists = self._identity_exists()
         scan_done = int(summary.get("brokers_checked", 0) or 0) > 0
         review_started = bool(
             int(summary.get("action_items", 0) or 0)
@@ -923,8 +1115,8 @@ class SupargusDesktop:
         for key, status in states.items():
             self._set_guide_status(key, status)
         if states["identity"] != "Done":
-            self.guide_cta_var.set("Open local setup")
-            body = "Create or choose the identity file Supargus should use for this privacy check."
+            self.guide_cta_var.set("Start setup")
+            body = "Create a privacy profile so Supargus knows what to search for."
         elif states["scan"] != "Done":
             self.guide_cta_var.set("Run guided scan")
             body = "Start with a broker scan and local PC check, then let Supargus prepare safe local artifacts."
@@ -944,7 +1136,7 @@ class SupargusDesktop:
         summary = self.state.get("summary", {})
         states = self._guide_step_state(summary)
         if states["identity"] != "Done":
-            self.show_page("advanced")
+            self.show_page("setup")
         elif states["scan"] != "Done":
             self.run_action("workflow")
         elif states["review"] != "Done":
