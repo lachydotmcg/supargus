@@ -25,7 +25,7 @@ from supargus.registry import load_default_brokers, validate_brokers
 from supargus.schedule import cron_line, schedule_instructions, schtasks_create_command
 from supargus.shortcut import build_shortcut_spec, shortcut_locations
 from supargus.takedown import prepare_requests
-from supargus.tracker import due_for_follow_up, import_requests, load_tracker, prepare_followups, update_status
+from supargus.tracker import due_for_follow_up, import_requests, load_tracker, prepare_followups, record_payload, update_status
 from supargus.vault import open_file, seal_file, vault_available
 from supargus.watchdog import _token_hits, check_env_proxies, check_installed_app_signatures
 from supargus.workflow import run_workflow
@@ -284,12 +284,37 @@ class SupargusCoreTests(unittest.TestCase):
             tracker = Path(tmp) / "tracker.json"
             records = import_requests(requests, tracker, status="sent", follow_up_after_days=1)
             self.assertEqual(len(records), 1)
+            payload = record_payload(records[0])
+            self.assertTrue(payload["request_id"].startswith("SG-"))
+            self.assertIn("timeline", payload)
+            self.assertIn("next_follow_up_at", payload)
+            self.assertIn("Name: Jane Example", payload["requested_data"])
             update_status(tracker, brokers[0].id, "waiting", notes="confirmation pending")
             loaded = load_tracker(tracker)
             self.assertEqual(loaded[0].status, "waiting")
             loaded[0].updated_at = (datetime.now(timezone.utc) - timedelta(days=2)).isoformat(timespec="seconds")
             due = due_for_follow_up(loaded)
             self.assertEqual(len(due), 1)
+
+    def test_build_state_includes_tracker_timeline_payload(self) -> None:
+        profile = sample_identity()
+        broker = load_default_brokers()[0]
+        match = BrokerMatch(
+            broker_id=broker.id,
+            broker_name=broker.name,
+            status="needs_manual_review",
+            confidence="unknown",
+            score=0,
+            search_url="https://example.com/search",
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            requests, _ = prepare_requests([match], [broker], profile, root / "requests")
+            import_requests(requests, root / "tracker.json")
+            state = build_state(root)
+        self.assertTrue(state["tracker"][0]["request_id"].startswith("SG-"))
+        self.assertIn("status_explanation", state["tracker"][0])
+        self.assertEqual(state["summary"]["tracker_records"], 1)
 
     def test_prepare_followups_writes_manifest(self) -> None:
         profile = sample_identity()

@@ -17,7 +17,7 @@ from .mailer import load_smtp_config, preview_requests, send_requests
 from .registry import load_registry, validate_registry
 from .report import matches_payload, watchdog_payload, write_html_report, write_json
 from .takedown import prepare_requests
-from .tracker import format_records, import_requests, load_tracker, prepare_followups
+from .tracker import format_records, import_requests, load_tracker, prepare_followups, record_payload
 from .watchdog import run_watchdog
 from .workflow import run_workflow
 
@@ -47,7 +47,6 @@ def build_state(workspace: str | Path) -> dict:
     watchdog = _load_json(root / "watchdog.json", {})
     monitor = _load_json(root / "monitor_diff.json", {})
     tracker_path = root / "tracker.json"
-    tracker = _load_json(tracker_path, {})
     bundle_path = root / "supargus_evidence_bundle.zip"
     requests_path = root / "requests" / "requests.json"
     followups_path = root / "followups" / "requests.json"
@@ -57,7 +56,7 @@ def build_state(workspace: str | Path) -> dict:
     broker_summary = broker.get("summary", {}) if isinstance(broker, dict) else {}
     watchdog_summary = watchdog.get("summary", {}) if isinstance(watchdog, dict) else {}
     monitor_summary = monitor.get("summary", {}) if isinstance(monitor, dict) else {}
-    tracker_records = tracker.get("records", []) if isinstance(tracker, dict) else []
+    tracker_records = [record_payload(record) for record in load_tracker(tracker_path)]
     matches = broker.get("matches", []) if isinstance(broker, dict) else []
     findings = watchdog.get("findings", []) if isinstance(watchdog, dict) else []
     changes = monitor.get("changes", []) if isinstance(monitor, dict) else []

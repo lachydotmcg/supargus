@@ -54,6 +54,17 @@ Supargus follows the same broad shape as commercial data-removal services, but k
 
 Incogni describes a similar split: it scans people-search sites where records can be found, then sends opt-out requests to brokers that may hold private database records. Supargus is not trying to be a middleman for that. It is trying to give you the local workflow.
 
+## Removal Progress
+
+When requests are prepared or imported into the tracker, Supargus now gives each request a local request ID and timeline:
+
+- draft created
+- request submitted
+- follow-up window
+- removal confirmed
+
+The tracker also stores the specific identifiers requested for removal and the next follow-up date. This makes the app feel closer to a removal-service dashboard while keeping the records local.
+
 ## Quick Start
 
 ```bash

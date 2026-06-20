@@ -412,6 +412,12 @@ class SupargusDesktop:
             wraplength=370,
             justify="left",
         ).pack(anchor="w", padx=20, pady=(0, 18))
+        tk.Label(privacy, text="Removal progress", bg=COLORS["surface"], fg=COLORS["ink"], font=("Segoe UI", 13, "bold")).pack(anchor="w", padx=20, pady=(4, 8))
+        progress_body = tk.Frame(privacy, bg=COLORS["surface"])
+        progress_body.pack(fill="both", expand=True, padx=20, pady=(0, 18))
+        progress_body.columnconfigure(0, weight=1)
+        progress_body.rowconfigure(0, weight=1)
+        self.progress_tree = self._tree(progress_body, ("request_id", "broker", "status", "next_follow_up"))
 
     def _home_action(self, parent: "tk.Widget", row: int, column: int, title: str, body: str, action: str, button_text: str, *, primary: bool = False) -> None:
         card = self._card(parent, row, column)
@@ -650,6 +656,7 @@ class SupargusDesktop:
         self._populate_brokers(self.state["matches"])
         self._populate_watchdog(self.state["findings"])
         self._populate_tracker(self.state["tracker"])
+        self._populate_progress(self.state["tracker"])
         self._populate_forms(self.state)
         self._populate_custom()
 
@@ -705,6 +712,25 @@ class SupargusDesktop:
         self._clear_tree(self.tracker_tree)
         for item in items:
             self.tracker_tree.insert("", "end", values=(item.get("broker_name", ""), item.get("status", ""), item.get("delivery", ""), item.get("updated_at", "")))
+
+    def _populate_progress(self, items: list[dict[str, Any]]) -> None:
+        if not hasattr(self, "progress_tree"):
+            return
+        self._clear_tree(self.progress_tree)
+        if not items:
+            self.progress_tree.insert("", "end", values=("No requests yet", "Run guided scan", "", ""))
+            return
+        for item in items[:8]:
+            self.progress_tree.insert(
+                "",
+                "end",
+                values=(
+                    item.get("request_id", ""),
+                    item.get("broker_name", ""),
+                    item.get("status", ""),
+                    item.get("next_follow_up_at", ""),
+                ),
+            )
 
     def _populate_forms(self, state: dict[str, Any]) -> None:
         forms_path = state["paths"].get("forms", "")
