@@ -16,7 +16,7 @@ from supargus.bundle import export_bundle
 from supargus.cli import build_parser
 from supargus.config import WorkflowConfig, load_config, save_default_config
 from supargus.custom import add_custom_target, load_custom_targets, prepare_custom_requests, update_custom_status
-from supargus.desktop import DESKTOP_ACTIONS
+from supargus.desktop import DESKTOP_ACTIONS, _plain_english_report
 from supargus.forms import build_form_queue, format_form_queue
 from supargus.identity import identity_from_dict, sample_identity, save_identity, load_identity
 from supargus.mailer import gmail_smtp_config, load_smtp_config, save_smtp_config
@@ -417,6 +417,21 @@ class SupargusCoreTests(unittest.TestCase):
         self.assertIn("mail_preview", actions)
         self.assertIn("form_queue", actions)
         self.assertIn("bundle", actions)
+
+    def test_plain_english_report_explains_low_score_actions(self) -> None:
+        summary = {
+            "possible_matches": 2,
+            "request_only": 8,
+            "watchdog_findings": 2,
+            "form_tasks": 10,
+            "request_drafts": 10,
+            "bundle_size": 18000,
+        }
+        report = _plain_english_report(summary, {"action_plan": False, "review_queue": False})
+        self.assertIn("Privacy score:", report)
+        self.assertIn("2 likely public broker hits", report)
+        self.assertIn("10 manual opt-out forms", report)
+        self.assertIn("Build the Review Queue", report)
 
     def test_cli_app_is_desktop_and_web_is_fallback(self) -> None:
         parser = build_parser()

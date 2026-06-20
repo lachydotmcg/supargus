@@ -28,10 +28,10 @@ except Exception:  # pragma: no cover - depends on local Python GUI support.
 
 
 GUIDE_STEPS = (
-    ("identity", "1", "Set up your identity", "Use a local identity vault or sample profile so Supargus knows what to search for."),
-    ("scan", "2", "Run a verified scan", "Supargus tries lightweight public searches first, then marks private brokers as request-only."),
-    ("review", "3", "Review evidence", "Check matches, blocked searches, and this-PC findings before sending anything."),
-    ("action", "4", "Take action", "Prepare removals, build form tasks, preview emails, and export receipts from your machine."),
+    ("identity", "1", "Set up your identity", "Enter the name, emails, usernames, phone numbers, and address Supargus should search for."),
+    ("scan", "2", "Run the dashboard privacy check", "Go to Dashboard and run the full privacy check so Supargus can build the first report."),
+    ("review", "3", "Read what was found", "Use the plain-English score report to see why the score changed and what needs attention."),
+    ("action", "4", "Take action", "Open Removals to finish form tasks, review drafts, and keep local receipts."),
 )
 
 
@@ -125,6 +125,94 @@ def _score_label(score: int) -> tuple[str, str]:
     return "Action needed", COLORS["red"]
 
 
+def _summary_int(summary: dict[str, Any], key: str) -> int:
+    return int(summary.get(key, 0) or 0)
+
+
+def _score_findings(summary: dict[str, Any]) -> list[str]:
+    findings: list[str] = []
+    possible = _summary_int(summary, "possible_matches")
+    request_only = _summary_int(summary, "request_only")
+    watchdog = _summary_int(summary, "watchdog_findings")
+    changes = _summary_int(summary, "scan_changes")
+    forms = _summary_int(summary, "form_tasks")
+    pending = _summary_int(summary, "review_pending")
+    drafts = _summary_int(summary, "request_drafts")
+
+    if possible:
+        findings.append(f"{possible} likely public broker hit{'s' if possible != 1 else ''} matched your profile.")
+    if request_only:
+        findings.append(f"{request_only} broker{'s' if request_only != 1 else ''} could not be searched directly and need request-only cleanup.")
+    if watchdog:
+        findings.append(f"{watchdog} local PC finding{'s' if watchdog != 1 else ''} need review.")
+    if forms:
+        findings.append(f"{forms} manual opt-out form{'s' if forms != 1 else ''} are waiting for you.")
+    if pending:
+        findings.append(f"{pending} email draft{'s' if pending != 1 else ''} need approval before sending.")
+    if changes:
+        findings.append(f"{changes} scan change{'s' if changes != 1 else ''} appeared since the last baseline.")
+    if drafts and not pending and not forms:
+        findings.append(f"{drafts} removal draft{'s' if drafts != 1 else ''} exist locally.")
+    if not findings:
+        findings.append("No actionable exposure has been found yet. Run a full privacy check to build the first report.")
+    return findings
+
+
+def _score_next_actions(summary: dict[str, Any], exists: dict[str, Any] | None = None) -> list[str]:
+    exists = exists or {}
+    actions: list[str] = []
+    possible = _summary_int(summary, "possible_matches")
+    request_only = _summary_int(summary, "request_only")
+    drafts = _summary_int(summary, "request_drafts")
+    forms = _summary_int(summary, "form_tasks")
+    pending = _summary_int(summary, "review_pending")
+    approved = _summary_int(summary, "review_approved")
+    watchdog = _summary_int(summary, "watchdog_findings")
+
+    if forms:
+        actions.append("Open Removals, finish the manual broker forms, then mark each one submitted.")
+    if pending:
+        actions.append("Open the Review Queue, approve only the drafts you trust, then send reviewed emails.")
+    elif drafts and not exists.get("review_queue"):
+        actions.append("Build the Review Queue so each removal draft can be approved or skipped.")
+    if possible and not drafts:
+        actions.append("Prepare removal drafts for the public hits Supargus found.")
+    if request_only and not drafts:
+        actions.append("Prepare request-only opt-outs for brokers that cannot be directly searched.")
+    if watchdog:
+        actions.append("Open This PC and review the local proxy or bandwidth-sharing findings.")
+    if approved:
+        actions.append("Send approved email requests when your SMTP/Gmail config is ready.")
+    if not exists.get("action_plan"):
+        actions.append("Build the Action Plan to turn findings into a prioritized queue.")
+    if not actions:
+        actions.append("Re-run the privacy check later to catch broker reappearances.")
+    return actions
+
+
+def _plain_english_report(summary: dict[str, Any], exists: dict[str, Any] | None = None) -> str:
+    score = _privacy_score(summary)
+    label, _color = _score_label(score)
+    lines = [
+        f"Privacy score: {score} ({label})",
+        "",
+        "Why this score changed:",
+    ]
+    for item in _score_findings(summary):
+        lines.append(f"- {item}")
+    lines.extend(["", "What to do next:"])
+    for idx, item in enumerate(_score_next_actions(summary, exists), 1):
+        lines.append(f"{idx}. {item}")
+    lines.extend(
+        [
+            "",
+            "What Supargus proved:",
+            "Public people-search hits are only marked when reachable pages return matching identifiers. Private or blocked broker databases are treated as request-only because Supargus cannot honestly verify them from your machine.",
+        ]
+    )
+    return "\n".join(lines)
+
+
 def _friendly_mode(item: dict[str, Any]) -> str:
     mode = str(item.get("action_mode") or "")
     status = str(item.get("status") or "")
@@ -174,6 +262,8 @@ class SupargusDesktop:
         self.custom_reason_var = tk.StringVar(value="personal data exposed")
         self.status_var = tk.StringVar(value="Ready")
         self.guide_cta_var = tk.StringVar(value="Run guided scan")
+        self.risk_headline_var = tk.StringVar(value="Run a privacy check")
+        self.risk_body_var = tk.StringVar(value="Supargus will explain what it found here.")
 
         self.metric_vars = {
             "brokers": tk.StringVar(value="0"),
@@ -616,6 +706,7 @@ class SupargusDesktop:
         ):
             self._insight_card(proof, title, body, mode).grid(row=0, column=idx, sticky="nsew", padx=(0 if idx == 0 else 8, 0))
 
+        self.action_badges: dict[str, tk.Label] = {}
         self._home_action(left, 1, 0, "Scan exposure", "Check data brokers and people-search sites.", "broker_scan", "Scan now", primary=True)
         self._home_action(left, 1, 1, "Prepare removals", "Create request drafts you can inspect.", "prepare_requests", "Prepare")
         self._home_action(left, 2, 0, "Scan this PC", "Find proxy and bandwidth-sharing signals.", "watchdog", "Scan PC")
@@ -631,6 +722,19 @@ class SupargusDesktop:
         workflow_button = self._button(advisor, "Run full privacy check", lambda: self.run_action("workflow"), primary=True)
         workflow_button.pack(anchor="w", padx=22, pady=(0, 14))
         self.buttons.append(workflow_button)
+
+        self.risk_panel = tk.Frame(advisor, bg=COLORS["red_soft"], highlightbackground=COLORS["red"], highlightthickness=1)
+        self.risk_panel.pack(fill="x", padx=22, pady=(0, 14))
+        risk_top = tk.Frame(self.risk_panel, bg=COLORS["red_soft"])
+        risk_top.pack(fill="x", padx=12, pady=(10, 2))
+        self.risk_badge = tk.Label(risk_top, text="!", bg=COLORS["red"], fg="#ffffff", width=2, font=("Segoe UI", 10, "bold"))
+        self.risk_badge.pack(side="left", padx=(0, 8))
+        tk.Label(risk_top, textvariable=self.risk_headline_var, bg=COLORS["red_soft"], fg=COLORS["ink"], font=("Segoe UI", 10, "bold"), wraplength=220, justify="left").pack(side="left", fill="x", expand=True)
+        tk.Label(self.risk_panel, textvariable=self.risk_body_var, bg=COLORS["red_soft"], fg=COLORS["ink"], font=("Segoe UI", 9), wraplength=250, justify="left").pack(anchor="w", padx=12, pady=(4, 10))
+        report_button = self._button(self.risk_panel, "View plain-English report", self._show_plain_english_report)
+        report_button.pack(anchor="w", padx=12, pady=(0, 12))
+        action_button = self._button(self.risk_panel, "Go to required action", self._open_required_action, primary=True)
+        action_button.pack(anchor="w", padx=12, pady=(0, 12))
 
         metrics = tk.Frame(advisor, bg=COLORS["surface"])
         metrics.pack(fill="x", padx=22, pady=(4, 16))
@@ -739,7 +843,13 @@ class SupargusDesktop:
 
     def _home_action(self, parent: "tk.Widget", row: int, column: int, title: str, body: str, action: str, button_text: str, *, primary: bool = False) -> None:
         card = self._card(parent, row, column)
-        tk.Label(card, text=title, bg=COLORS["surface"], fg=COLORS["ink"], font=("Segoe UI", 14, "bold")).pack(anchor="w", padx=20, pady=(18, 3))
+        title_row = tk.Frame(card, bg=COLORS["surface"])
+        title_row.pack(fill="x", padx=20, pady=(18, 3))
+        tk.Label(title_row, text=title, bg=COLORS["surface"], fg=COLORS["ink"], font=("Segoe UI", 14, "bold")).pack(side="left")
+        badge = tk.Label(title_row, text="!", bg=COLORS["red"], fg="#ffffff", width=2, font=("Segoe UI", 9, "bold"))
+        badge.pack(side="right")
+        badge.pack_forget()
+        self.action_badges[action] = badge
         tk.Label(card, text=body, bg=COLORS["surface"], fg=COLORS["muted"], font=("Segoe UI", 10), wraplength=300, justify="left").pack(anchor="w", padx=20)
         button = self._button(card, button_text, lambda: self.run_action(action), primary=primary)
         button.pack(anchor="w", padx=20, pady=18)
@@ -1043,6 +1153,8 @@ class SupargusDesktop:
 
         self._draw_score(score, label_color)
         self._set_next_step(summary)
+        self._update_risk_panel(summary, score)
+        self._update_action_badges(summary)
         self._update_guide(summary)
         self._populate_brokers(self.state["matches"])
         self._populate_watchdog(self.state["findings"])
@@ -1094,6 +1206,80 @@ class SupargusDesktop:
         self.next_step_title.configure(text=title)
         self.next_step_body.configure(text=body)
 
+    def _set_risk_widget_color(self, widget: "tk.Widget", bg: str) -> None:
+        try:
+            current = widget.cget("bg")
+            if current in {COLORS["red_soft"], COLORS["yellow_soft"], COLORS["green_soft"]}:
+                widget.configure(bg=bg)
+        except tk.TclError:
+            return
+        for child in widget.winfo_children():
+            self._set_risk_widget_color(child, bg)
+
+    def _update_risk_panel(self, summary: dict[str, Any], score: int) -> None:
+        findings = _score_findings(summary)
+        next_actions = _score_next_actions(summary, self.state.get("exists", {}))
+        headline = "Action needed" if score < 65 else "Needs review" if score < 85 else "Protected"
+        body = f"{findings[0]} Next: {next_actions[0]}"
+        bg = COLORS["red_soft"] if score < 65 else COLORS["yellow_soft"] if score < 85 else COLORS["green_soft"]
+        fg = COLORS["red"] if score < 65 else COLORS["yellow_dark"] if score < 85 else COLORS["green"]
+        self.risk_headline_var.set(headline)
+        self.risk_body_var.set(body)
+        self.risk_panel.configure(bg=bg, highlightbackground=fg)
+        self.risk_badge.configure(bg=fg)
+        self._set_risk_widget_color(self.risk_panel, bg)
+
+    def _set_action_badge(self, action: str, active: bool) -> None:
+        badge = getattr(self, "action_badges", {}).get(action)
+        if not badge:
+            return
+        if active:
+            badge.pack(side="right")
+        else:
+            badge.pack_forget()
+
+    def _update_action_badges(self, summary: dict[str, Any]) -> None:
+        checked = _summary_int(summary, "brokers_checked")
+        matches = _summary_int(summary, "possible_matches")
+        request_only = _summary_int(summary, "request_only")
+        drafts = _summary_int(summary, "request_drafts")
+        watchdog = _summary_int(summary, "watchdog_findings")
+        bundle = _summary_int(summary, "bundle_size")
+        self._set_action_badge("broker_scan", checked == 0)
+        self._set_action_badge("prepare_requests", (matches or request_only) and drafts == 0)
+        self._set_action_badge("watchdog", watchdog > 0)
+        self._set_action_badge("bundle", drafts > 0 and bundle == 0)
+
+    def _show_plain_english_report(self) -> None:
+        report = _plain_english_report(self.state.get("summary", {}), self.state.get("exists", {}))
+        if tk is None:
+            return
+        popup = tk.Toplevel(self.root)
+        popup.title("Supargus report")
+        popup.geometry("620x520")
+        popup.configure(bg=COLORS["surface"])
+        popup.columnconfigure(0, weight=1)
+        popup.rowconfigure(1, weight=1)
+        tk.Label(popup, text="Plain-English privacy report", bg=COLORS["surface"], fg=COLORS["ink"], font=("Segoe UI", 17, "bold")).grid(row=0, column=0, sticky="w", padx=18, pady=(16, 8))
+        text = tk.Text(popup, bg=COLORS["surface_alt"], fg=COLORS["ink"], relief="flat", wrap="word", padx=14, pady=12, font=("Segoe UI", 10))
+        text.grid(row=1, column=0, sticky="nsew", padx=18, pady=(0, 12))
+        text.insert("1.0", report)
+        text.configure(state="disabled")
+        self._button(popup, "Close", popup.destroy).grid(row=2, column=0, sticky="e", padx=18, pady=(0, 16))
+
+    def _open_required_action(self) -> None:
+        summary = self.state.get("summary", {})
+        if _summary_int(summary, "form_tasks") or _summary_int(summary, "review_pending"):
+            self.show_page("removals")
+        elif (_summary_int(summary, "possible_matches") or _summary_int(summary, "request_only")) and not _summary_int(summary, "request_drafts"):
+            self.show_page("cleanup")
+        elif _summary_int(summary, "watchdog_findings"):
+            self.show_page("watchdog")
+        elif not _summary_int(summary, "brokers_checked"):
+            self.run_action("workflow")
+        else:
+            self.show_page("guide")
+
     def _guide_step_state(self, summary: dict[str, Any]) -> dict[str, str]:
         identity_exists = self._identity_exists()
         scan_done = int(summary.get("brokers_checked", 0) or 0) > 0
@@ -1140,8 +1326,8 @@ class SupargusDesktop:
             self.guide_cta_var.set("Build action plan")
             body = "Turn the scan results into a plain-English cleanup queue before approving anything."
         elif int(summary.get("review_pending", 0) or 0) or int(summary.get("form_tasks", 0) or 0):
-            self.guide_cta_var.set("Open review queue")
-            body = "Approve email requests, copy drafts, or open broker forms from the Removals workbench."
+            self.guide_cta_var.set("Open Removals")
+            body = "Finish manual forms, approve email drafts, and mark submitted work from the Removals workbench."
         else:
             self.guide_cta_var.set("Automate safe steps")
             body = "Prepare drafts, tracker records, follow-ups, action plan, and receipts without sending email."
