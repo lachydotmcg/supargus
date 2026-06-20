@@ -44,7 +44,7 @@
 - [x] local request IDs, status explanations, and timeline payloads
 - [x] local action plan queue from scan, request, tracker, and form artifacts
 - [x] one-click safe local automation for drafts, form queue, tracker, follow-ups, action plan, and receipts
-- [ ] editable review queue
+- [x] editable review queue with approve/skip controls
 - [ ] request status editing from the app
 - [ ] broker detail drawers
 - [ ] scheduled re-scan manager

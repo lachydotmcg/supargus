@@ -17,6 +17,13 @@ from .identity import load_identity
 from .mailer import load_smtp_config, preview_requests, send_requests
 from .registry import load_registry, validate_registry
 from .report import matches_payload, watchdog_payload, write_html_report, write_json
+from .review import (
+    REVIEW_QUEUE_NAME,
+    approved_requests,
+    build_review_queue,
+    load_review_queue,
+    update_review_status,
+)
 from .takedown import prepare_requests
 from .tracker import format_records, import_requests, load_tracker, prepare_followups, record_payload
 from .watchdog import run_watchdog
@@ -54,6 +61,7 @@ def build_state(workspace: str | Path) -> dict:
     forms_path = root / "forms" / "forms.json"
     smtp_path = root / "smtp.gmail.json"
     action_plan_path = root / ACTION_PLAN_NAME
+    review_path = root / REVIEW_QUEUE_NAME
 
     broker_summary = broker.get("summary", {}) if isinstance(broker, dict) else {}
     watchdog_summary = watchdog.get("summary", {}) if isinstance(watchdog, dict) else {}
@@ -65,6 +73,7 @@ def build_state(workspace: str | Path) -> dict:
     action_plan = _load_json(action_plan_path, {})
     action_summary = action_plan.get("summary", {}) if isinstance(action_plan, dict) else {}
     action_items = action_plan.get("items", []) if isinstance(action_plan, dict) else []
+    review_items = [item.__dict__ for item in load_review_queue(review_path)]
 
     return {
         "workspace": str(root.resolve()),
@@ -78,6 +87,7 @@ def build_state(workspace: str | Path) -> dict:
             "forms": str(forms_path),
             "bundle": str(bundle_path),
             "action_plan": str(action_plan_path),
+            "review_queue": str(review_path),
             "config": str(Path(DEFAULT_CONFIG_NAME).resolve()),
             "smtp_config": str(smtp_path),
         },
@@ -91,6 +101,7 @@ def build_state(workspace: str | Path) -> dict:
             "forms": _path_exists(forms_path),
             "bundle": _path_exists(bundle_path),
             "action_plan": _path_exists(action_plan_path),
+            "review_queue": _path_exists(review_path),
             "config": _path_exists(Path(DEFAULT_CONFIG_NAME)),
             "smtp_config": _path_exists(smtp_path),
         },
@@ -109,6 +120,9 @@ def build_state(workspace: str | Path) -> dict:
             "form_tasks": len(load_form_queue(forms_path)),
             "action_items": int(action_summary.get("total", 0) or 0),
             "high_priority_actions": int(action_summary.get("high", 0) or 0),
+            "review_pending": sum(1 for item in review_items if item.get("status") == "pending"),
+            "review_approved": sum(1 for item in review_items if item.get("status") == "approved"),
+            "review_skipped": sum(1 for item in review_items if item.get("status") == "skipped"),
             "bundle_size": bundle_path.stat().st_size if bundle_path.exists() else 0,
         },
         "matches": matches[:80],
@@ -116,6 +130,7 @@ def build_state(workspace: str | Path) -> dict:
         "changes": changes[:80],
         "tracker": tracker_records[:80],
         "action_plan": action_items[:80],
+        "review_queue": review_items[:80],
     }
 
 
@@ -496,13 +511,22 @@ def run_action(workspace: Path, payload: dict) -> dict:
         matches = _matches_from_path(root / "broker_matches.json")
         requests, manifest = prepare_requests(matches, load_registry(None), identity, root / "requests")
         tasks, forms_manifest = build_form_queue(requests, root / "forms" / "forms.json")
-        return {"requests": len(requests), "manifest": str(manifest), "form_tasks": len(tasks), "forms": str(forms_manifest)}
+        review_items, review_manifest = build_review_queue(requests, root / REVIEW_QUEUE_NAME)
+        return {
+            "requests": len(requests),
+            "manifest": str(manifest),
+            "form_tasks": len(tasks),
+            "forms": str(forms_manifest),
+            "review_items": len(review_items),
+            "review_queue": str(review_manifest),
+        }
 
     if action == "safe_actions":
         identity = load_identity(identity_path)
         matches = _matches_from_path(root / "broker_matches.json")
         requests, manifest = prepare_requests(matches, load_registry(None), identity, root / "requests")
         tasks, forms_manifest = build_form_queue(requests, root / "forms" / "forms.json")
+        review_items, review_manifest = build_review_queue(requests, root / REVIEW_QUEUE_NAME)
         records = import_requests(requests, root / "tracker.json")
         followups, followups_manifest = prepare_followups(records, root / "followups", due_only=True)
         bundle, bundle_manifest = export_bundle(root, root / "supargus_evidence_bundle.zip")
@@ -512,6 +536,8 @@ def run_action(workspace: Path, payload: dict) -> dict:
             "request_manifest": str(manifest),
             "form_tasks": len(tasks),
             "forms": str(forms_manifest),
+            "review_items": len(review_items),
+            "review_queue": str(review_manifest),
             "tracker_records": len(records),
             "followups": len(followups),
             "followups_manifest": str(followups_manifest),
@@ -532,9 +558,27 @@ def run_action(workspace: Path, payload: dict) -> dict:
 
     if action == "mail_send":
         requests = _load_requests(root / "requests" / "requests.json")
+        requests = approved_requests(requests, root / REVIEW_QUEUE_NAME)
+        if not requests:
+            raise ValueError("No approved email requests. Approve requests in the review queue before sending.")
         config = load_smtp_config(smtp_config)
         sent = send_requests(requests, config, limit=limit)
         return {"sent": len(sent), "items": sent}
+
+    if action == "review_queue":
+        requests = _load_requests(root / "requests" / "requests.json")
+        items, manifest = build_review_queue(requests, root / REVIEW_QUEUE_NAME)
+        return {"review_items": len(items), "review_queue": str(manifest)}
+
+    if action == "review_approve":
+        request_id = str(payload.get("request_id", ""))
+        items = update_review_status(root / REVIEW_QUEUE_NAME, request_id, "approved")
+        return {"review_items": len(items), "approved": sum(1 for item in items if item.status == "approved")}
+
+    if action == "review_skip":
+        request_id = str(payload.get("request_id", ""))
+        items = update_review_status(root / REVIEW_QUEUE_NAME, request_id, "skipped")
+        return {"review_items": len(items), "skipped": sum(1 for item in items if item.status == "skipped")}
 
     if action == "tracker_import":
         requests = _load_requests(root / "requests" / "requests.json")
@@ -587,6 +631,8 @@ def _matches_from_path(path: Path):
 def _load_requests(path: Path):
     from .takedown import load_requests
 
+    if not path.exists():
+        return []
     return load_requests(path)
 
 

@@ -21,8 +21,9 @@ from supargus.forms import build_form_queue, format_form_queue
 from supargus.identity import identity_from_dict, sample_identity, save_identity, load_identity
 from supargus.mailer import gmail_smtp_config, load_smtp_config, save_smtp_config
 from supargus.monitor import diff_matches, diff_payload, save_snapshot, latest_snapshot
-from supargus.models import BrokerMatch
+from supargus.models import BrokerMatch, TakedownRequest
 from supargus.registry import load_default_brokers, validate_brokers
+from supargus.review import approved_requests, build_review_queue, update_review_status
 from supargus.schedule import cron_line, schedule_instructions, schtasks_create_command
 from supargus.shortcut import build_shortcut_spec, shortcut_locations
 from supargus.takedown import prepare_requests
@@ -253,6 +254,99 @@ class SupargusCoreTests(unittest.TestCase):
         self.assertEqual(result["requests"], 1)
         self.assertEqual(result["tracker_records"], 1)
         self.assertGreaterEqual(result["action_items"], 1)
+
+    def test_review_queue_gates_approved_requests(self) -> None:
+        requests = [
+            TakedownRequest(
+                broker_id="broker-a",
+                broker_name="Broker A",
+                request_type="delete_opt_out",
+                to_email="privacy@broker-a.example",
+                subject="Remove my data",
+                body="Please remove me.",
+                created_at="2026-01-01T00:00:00+00:00",
+            ),
+            TakedownRequest(
+                broker_id="broker-b",
+                broker_name="Broker B",
+                request_type="delete_opt_out",
+                to_email="privacy@broker-b.example",
+                subject="Remove my data",
+                body="Please remove me too.",
+                created_at="2026-01-01T00:00:01+00:00",
+            ),
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            queue_path = Path(tmp) / "review_queue.json"
+            queue, manifest = build_review_queue(requests, queue_path)
+            update_review_status(queue_path, queue[0].request_id, "approved")
+            approved = approved_requests(requests, queue_path)
+            manifest_exists = manifest.exists()
+        self.assertTrue(manifest_exists)
+        self.assertEqual(len(approved), 1)
+        self.assertEqual(approved[0].broker_id, "broker-a")
+
+    def test_prepare_requests_action_writes_review_queue(self) -> None:
+        profile = sample_identity()
+        broker = load_default_brokers()[0]
+        match = BrokerMatch(
+            broker_id=broker.id,
+            broker_name=broker.name,
+            status="needs_manual_review",
+            confidence="unknown",
+            score=0,
+            search_url="https://example.com/search",
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            identity = root / "identity.json"
+            save_identity(profile, identity)
+            (root / "broker_matches.json").write_text(
+                json.dumps({"matches": [match.__dict__], "summary": {"checked": 1, "manual_review": 1}}),
+                encoding="utf-8",
+            )
+            result = run_action(root, {"action": "prepare_requests", "workspace": tmp, "identity": str(identity)})
+            state = build_state(root)
+        self.assertEqual(result["review_items"], 1)
+        self.assertEqual(state["summary"]["review_pending"], 1)
+        self.assertTrue(state["exists"]["review_queue"])
+
+    def test_mail_send_requires_review_approval(self) -> None:
+        request_a = TakedownRequest(
+            broker_id="broker-a",
+            broker_name="Broker A",
+            request_type="delete_opt_out",
+            to_email="privacy@broker-a.example",
+            subject="Remove my data",
+            body="Please remove me.",
+            created_at="2026-01-01T00:00:00+00:00",
+        )
+        request_b = TakedownRequest(
+            broker_id="broker-b",
+            broker_name="Broker B",
+            request_type="delete_opt_out",
+            to_email="privacy@broker-b.example",
+            subject="Remove my data",
+            body="Please remove me too.",
+            created_at="2026-01-01T00:00:01+00:00",
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            requests_dir = root / "requests"
+            requests_dir.mkdir()
+            (requests_dir / "requests.json").write_text(json.dumps([request_a.__dict__, request_b.__dict__]), encoding="utf-8")
+            smtp_path = root / "smtp.gmail.json"
+            save_smtp_config(gmail_smtp_config("jane@example.com", "abcd efgh ijkl mnop"), smtp_path)
+            queue, _ = build_review_queue([request_a, request_b], root / "review_queue.json")
+            with self.assertRaises(ValueError):
+                run_action(root, {"action": "mail_send", "workspace": tmp, "smtp_config": str(smtp_path)})
+            update_review_status(root / "review_queue.json", queue[1].request_id, "approved")
+            with patch("supargus.app.send_requests", return_value=[{"broker_id": "broker-b"}]) as mocked:
+                result = run_action(root, {"action": "mail_send", "workspace": tmp, "smtp_config": str(smtp_path)})
+        sent_requests = mocked.call_args.args[0]
+        self.assertEqual(result["sent"], 1)
+        self.assertEqual(len(sent_requests), 1)
+        self.assertEqual(sent_requests[0].broker_id, "broker-b")
 
     def test_gmail_smtp_config_roundtrip(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

@@ -41,6 +41,7 @@ DESKTOP_ACTIONS: tuple[tuple[str, str, str], ...] = (
     ("watchdog", "Scan this PC", "Look for proxy, extension, startup, and bandwidth-sharing signals."),
     ("prepare_requests", "Prepare removals", "Create readable takedown drafts from broker matches."),
     ("form_queue", "Build form queue", "Collect brokers that need manual opt-out forms."),
+    ("review_queue", "Build review queue", "Create approve/skip records for generated requests."),
     ("action_plan", "Build action plan", "Turn scan, request, tracker, and form outputs into next steps."),
     ("safe_actions", "Automate safe steps", "Prepare drafts, form queue, tracker, follow-ups, action plan, and receipts without sending."),
     ("mail_preview", "Preview emails", "Review request emails before anything is sent."),
@@ -129,6 +130,7 @@ class SupargusDesktop:
         self.form_tasks: list[FormTask] = []
         self.custom_targets: list[Any] = []
         self.action_items: list[dict[str, Any]] = []
+        self.review_items: list[dict[str, Any]] = []
         self.state: dict[str, Any] = {}
 
         workspace_path = Path(workspace)
@@ -147,6 +149,7 @@ class SupargusDesktop:
             "watchdog": tk.StringVar(value="0"),
             "request_only": tk.StringVar(value="0"),
             "action_items": tk.StringVar(value="0"),
+            "review_approved": tk.StringVar(value="0"),
             "changes": tk.StringVar(value="0"),
             "requests": tk.StringVar(value="0"),
             "bundle": tk.StringVar(value="0 B"),
@@ -360,6 +363,7 @@ class SupargusDesktop:
             ("Possible matches", self.metric_vars["matches"]),
             ("Request-only brokers", self.metric_vars["request_only"]),
             ("Action plan", self.metric_vars["action_items"]),
+            ("Approved sends", self.metric_vars["review_approved"]),
             ("Watchdog findings", self.metric_vars["watchdog"]),
             ("Draft requests", self.metric_vars["requests"]),
             ("Evidence bundle", self.metric_vars["bundle"]),
@@ -465,6 +469,7 @@ class SupargusDesktop:
             ("Scan brokers", "broker_scan", True),
             ("Prepare removals", "prepare_requests", False),
             ("Build form queue", "form_queue", False),
+            ("Build review queue", "review_queue", False),
             ("Build action plan", "action_plan", False),
             ("Automate safe steps", "safe_actions", False),
             ("Preview emails", "mail_preview", False),
@@ -504,10 +509,11 @@ class SupargusDesktop:
         self._section_header(page, "Removal workbench", "Review form tasks and add custom removal targets that are outside the broker registry.")
 
         self._build_forms_panel(page)
+        self._build_review_panel(page)
         self._build_custom_panel(page)
 
     def _build_forms_panel(self, page: "tk.Frame") -> None:
-        card = self._card(page, 1, 0, rowspan=2)
+        card = self._card(page, 1, 0)
         card.columnconfigure(0, weight=1)
         card.rowconfigure(2, weight=1)
         tk.Label(card, text="Manual form queue", bg=COLORS["surface"], fg=COLORS["ink"], font=("Segoe UI", 14, "bold")).grid(row=0, column=0, sticky="w", padx=18, pady=(16, 0))
@@ -550,6 +556,25 @@ class SupargusDesktop:
         body.columnconfigure(0, weight=1)
         body.rowconfigure(0, weight=1)
         self.custom_tree = self._tree(body, ("status", "domain", "url"))
+
+    def _build_review_panel(self, page: "tk.Frame") -> None:
+        card = self._card(page, 2, 0)
+        card.columnconfigure(0, weight=1)
+        card.rowconfigure(2, weight=1)
+        tk.Label(card, text="Review queue", bg=COLORS["surface"], fg=COLORS["ink"], font=("Segoe UI", 14, "bold")).grid(row=0, column=0, sticky="w", padx=18, pady=(16, 0))
+        controls = tk.Frame(card, bg=COLORS["surface"])
+        controls.grid(row=1, column=0, sticky="ew", padx=18, pady=12)
+        for text, command, primary in (
+            ("Approve", self._approve_selected_review, True),
+            ("Skip", self._skip_selected_review, False),
+            ("Copy draft", self._copy_selected_review, False),
+        ):
+            self._button(controls, text, command, primary=primary).pack(side="left", padx=(0, 8))
+        body = tk.Frame(card, bg=COLORS["surface"])
+        body.grid(row=2, column=0, sticky="nsew", padx=18, pady=(0, 18))
+        body.columnconfigure(0, weight=1)
+        body.rowconfigure(0, weight=1)
+        self.review_tree = self._tree(body, ("status", "broker", "delivery", "destination"))
 
     def _build_advanced_page(self) -> None:
         page = self._page("advanced")
@@ -638,7 +663,7 @@ class SupargusDesktop:
             "fetch": True,
         }
 
-    def run_action(self, action: str) -> None:
+    def run_action(self, action: str, extra: dict[str, Any] | None = None) -> None:
         if action == "guide_take_action":
             action = "workflow"
         if action == "mail_send" and messagebox:
@@ -650,6 +675,8 @@ class SupargusDesktop:
                 return
         self._set_running(True, f"Running {action}...")
         payload = self._payload(action)
+        if extra:
+            payload.update(extra)
         workspace = Path(payload["workspace"])
 
         def worker() -> None:
@@ -671,6 +698,7 @@ class SupargusDesktop:
         self.metric_vars["matches"].set(str(summary["possible_matches"]))
         self.metric_vars["request_only"].set(str(summary.get("request_only", 0)))
         self.metric_vars["action_items"].set(str(summary.get("action_items", 0)))
+        self.metric_vars["review_approved"].set(str(summary.get("review_approved", 0)))
         self.metric_vars["watchdog"].set(str(summary["watchdog_findings"]))
         self.metric_vars["changes"].set(str(summary["scan_changes"]))
         self.metric_vars["requests"].set(str(summary["request_drafts"]))
@@ -687,6 +715,7 @@ class SupargusDesktop:
         self._populate_tracker(self.state["tracker"])
         self._populate_progress(self.state["tracker"])
         self._populate_action_plan(self.state["action_plan"])
+        self._populate_review_queue(self.state["review_queue"])
         self._populate_forms(self.state)
         self._populate_custom()
 
@@ -795,6 +824,68 @@ class SupargusDesktop:
             return
         for idx, task in enumerate(self.form_tasks):
             self.forms_tree.insert("", "end", iid=f"form-{idx}", values=(task.broker_name, task.status, task.opt_out_url))
+
+    def _populate_review_queue(self, items: list[dict[str, Any]]) -> None:
+        if not hasattr(self, "review_tree"):
+            return
+        self.review_items = list(items)
+        self._clear_tree(self.review_tree)
+        if not items:
+            self.review_tree.insert("", "end", iid="review-empty", values=("pending", "Build review queue", "", ""))
+            return
+        for idx, item in enumerate(items):
+            destination = item.get("to_email") or item.get("opt_out_url") or item.get("profile_url") or ""
+            self.review_tree.insert(
+                "",
+                "end",
+                iid=f"review-{idx}",
+                values=(item.get("status", ""), item.get("broker_name", ""), item.get("delivery", ""), destination),
+            )
+
+    def _selected_review_item(self) -> dict[str, Any] | None:
+        if not hasattr(self, "review_tree"):
+            return None
+        selected = self.review_tree.selection()
+        if not selected:
+            return None
+        try:
+            index = int(selected[0].split("-", 1)[1])
+            return self.review_items[index]
+        except Exception:
+            return None
+
+    def _approve_selected_review(self) -> None:
+        item = self._selected_review_item()
+        if not item:
+            self._log("Select a review item first.")
+            return
+        self.run_action("review_approve", {"request_id": item.get("request_id", "")})
+
+    def _skip_selected_review(self) -> None:
+        item = self._selected_review_item()
+        if not item:
+            self._log("Select a review item first.")
+            return
+        self.run_action("review_skip", {"request_id": item.get("request_id", "")})
+
+    def _copy_selected_review(self) -> None:
+        item = self._selected_review_item()
+        if not item:
+            self._log("Select a review item first.")
+            return
+        path = Path(str(item.get("file_path", "")))
+        body = path.read_text(encoding="utf-8") if path.exists() else ""
+        text = (
+            f"{item.get('broker_name', '')}\n"
+            f"Status: {item.get('status', '')}\n"
+            f"Delivery: {item.get('delivery', '')}\n"
+            f"Destination: {item.get('to_email') or item.get('opt_out_url') or ''}\n\n"
+            f"{body}"
+        )
+        self.root.clipboard_clear()
+        self.root.clipboard_append(text)
+        self.status_var.set("Copied review draft")
+        self._log(f"Copied review draft for {item.get('broker_name', '')}.")
 
     def _selected_action_item(self) -> dict[str, Any] | None:
         if not hasattr(self, "action_tree"):

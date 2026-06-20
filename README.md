@@ -50,7 +50,7 @@ Supargus follows the same broad shape as commercial data-removal services, but k
 - aliases, secondary emails, secondary phones, usernames, and address history are included in the matcher
 - private broker databases are marked as request-only because they often cannot be searched directly
 - takedown drafts, form tasks, tracker records, follow-ups, and receipt bundles are generated on your machine
-- email sending still requires explicit review
+- email sending requires explicit approval in the local review queue
 
 Incogni describes a similar split: it scans people-search sites where records can be found, then sends opt-out requests to brokers that may hold private database records. Supargus is not trying to be a middleman for that. It is trying to give you the local workflow.
 
@@ -65,12 +65,19 @@ When requests are prepared or imported into the tracker, Supargus now gives each
 
 The tracker also stores the specific identifiers requested for removal and the next follow-up date. This makes the app feel closer to a removal-service dashboard while keeping the records local.
 
+## Review Queue
+
+Supargus creates `workspace/review_queue.json` when removal drafts are prepared. Every request starts as pending. In the desktop app you can approve, skip, or copy the draft before anything leaves your machine.
+
+The send action only uses approved email requests. Manual-form brokers stay in the form queue, and skipped requests remain visible as local state instead of disappearing.
+
 ## Local Action Plan
 
 After a guided scan or workflow run, Supargus writes `workspace/action_plan.json`. The plan groups the next steps into:
 
 - verified scan findings to review
 - request-only brokers where private databases cannot be searched directly
+- pending removal drafts waiting for approval
 - email drafts ready for preview
 - manual opt-out forms to complete
 - follow-ups that are due
@@ -118,7 +125,8 @@ supargus shortcut install --workspace workspace
 | Identity Vault | Stores your names, aliases, emails, phones, addresses, usernames, and jurisdiction locally. |
 | Broker Radar | Checks known data broker and people-search sites for likely exposure. |
 | Takedown Studio | Generates opt-out, deletion, do-not-sell/share, and follow-up request drafts. |
-| Mail Runner | Previews and sends reviewed requests through SMTP or Gmail app-password config. |
+| Review Queue | Lets you approve, skip, and copy each request before sending. |
+| Mail Runner | Sends only approved email requests through SMTP or Gmail app-password config. |
 | Form Queue | Tracks brokers that require manual web forms, with open/copy/mark-submitted controls. |
 | Action Plan | Turns scan, request, tracker, and form outputs into a prioritized local cleanup queue. |
 | Safe Automation | One-click local prep for drafts, form queue, tracker records, follow-ups, action plan, and receipts. |
