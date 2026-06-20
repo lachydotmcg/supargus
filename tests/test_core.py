@@ -16,7 +16,7 @@ from supargus.bundle import export_bundle
 from supargus.cli import build_parser
 from supargus.config import WorkflowConfig, load_config, save_default_config
 from supargus.custom import add_custom_target, load_custom_targets, prepare_custom_requests, update_custom_status
-from supargus.desktop import DESKTOP_ACTIONS, _plain_english_report
+from supargus.desktop import DESKTOP_ACTIONS, _broker_user_row, _plain_english_report, _review_status_label, _task_label, _watchdog_meaning
 from supargus.forms import build_form_queue, format_form_queue
 from supargus.identity import identity_from_dict, sample_identity, save_identity, load_identity
 from supargus.mailer import gmail_smtp_config, load_smtp_config, save_smtp_config
@@ -432,6 +432,23 @@ class SupargusCoreTests(unittest.TestCase):
         self.assertIn("2 likely public broker hits", report)
         self.assertIn("10 manual opt-out forms", report)
         self.assertIn("Build the Review Queue", report)
+
+    def test_desktop_translates_internal_statuses_for_users(self) -> None:
+        row = _broker_user_row(
+            {
+                "broker_name": "Example Broker",
+                "status": "possible_match",
+                "matched_fields": ["name", "email"],
+                "evidence_url": "https://example.com/profile",
+            }
+        )
+        self.assertIsNotNone(row)
+        self.assertEqual(row[0], "Example Broker")
+        self.assertIn("Possible public profile", row[1])
+        self.assertEqual(_broker_user_row({"broker_name": "Clean Broker", "status": "no_obvious_match"}), None)
+        self.assertEqual(_task_label("needs_form"), "Open website form")
+        self.assertEqual(_review_status_label("pending"), "Needs your approval")
+        self.assertIn("browser extension", _watchdog_meaning({"category": "browser"}))
 
     def test_cli_app_is_desktop_and_web_is_fallback(self) -> None:
         parser = build_parser()

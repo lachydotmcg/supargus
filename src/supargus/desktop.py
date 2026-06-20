@@ -16,6 +16,7 @@ from .app import build_state, run_action
 from .custom import add_custom_target, load_custom_targets, prepare_custom_requests, update_custom_status
 from .forms import FormTask, load_form_queue, update_form_status
 from .identity import identity_from_dict, load_identity, sample_identity, save_identity
+from .mailer import gmail_smtp_config, save_smtp_config
 
 try:  # Keep imports optional so headless test environments can still import the package.
     import tkinter as tk
@@ -31,7 +32,7 @@ GUIDE_STEPS = (
     ("identity", "1", "Set up your identity", "Enter the name, emails, usernames, phone numbers, and address Supargus should search for."),
     ("scan", "2", "Run the dashboard privacy check", "Go to Dashboard and run the full privacy check so Supargus can build the first report."),
     ("review", "3", "Read what was found", "Use the plain-English score report to see why the score changed and what needs attention."),
-    ("action", "4", "Take action", "Open Removals to finish form tasks, review drafts, and keep local receipts."),
+    ("action", "4", "Take action", "Use Data Brokers to see the sites, then open Removals to send email requests, copy text, or finish forms."),
 )
 
 
@@ -213,6 +214,90 @@ def _plain_english_report(summary: dict[str, Any], exists: dict[str, Any] | None
     return "\n".join(lines)
 
 
+def _task_label(status: str) -> str:
+    labels = {
+        "needs_form": "Open website form",
+        "submitted": "Submitted",
+        "confirmed": "Removed",
+        "waiting": "Waiting for broker",
+    }
+    return labels.get(status, status.replace("_", " ").title())
+
+
+def _review_status_label(status: str) -> str:
+    labels = {
+        "pending": "Needs your approval",
+        "approved": "Approved to send",
+        "skipped": "Skipped",
+    }
+    return labels.get(status, status.replace("_", " ").title())
+
+
+def _delivery_label(item: dict[str, Any]) -> str:
+    if item.get("to_email"):
+        return "Email request"
+    if item.get("opt_out_url"):
+        return "Website form"
+    return str(item.get("delivery") or "Manual review").replace("_", " ").title()
+
+
+def _broker_user_row(item: dict[str, Any]) -> tuple[str, str, str, str] | None:
+    status = str(item.get("status") or "")
+    mode = str(item.get("action_mode") or "")
+    place = str(item.get("broker_name") or item.get("broker_id") or "Unknown broker")
+    open_url = str(item.get("evidence_url") or item.get("search_url") or "")
+    matched_fields = [str(value).replace("_", " ") for value in item.get("matched_fields", []) if value]
+
+    if status == "possible_match" or mode == "verified_public":
+        fields = ", ".join(matched_fields) if matched_fields else str(item.get("confidence") or "profile details")
+        return (
+            place,
+            f"Possible public profile matched: {fields}",
+            "Prepare removal, then review before sending",
+            open_url,
+        )
+    if mode == "request_only" or status in {"fetch_error", "needs_manual_review"}:
+        reason = "site blocked direct checking" if item.get("error") else "private or manual database"
+        return (
+            place,
+            f"Could not verify directly: {reason}",
+            "Prepare a request-only opt-out",
+            open_url,
+        )
+    if mode == "public_unverified":
+        return (
+            place,
+            "Public search result needs manual review",
+            "Open the result and decide whether to request removal",
+            open_url,
+        )
+    return None
+
+
+def _watchdog_meaning(item: dict[str, Any]) -> str:
+    category = str(item.get("category", ""))
+    if category == "network":
+        return "Your traffic may be routed or exposed in a way you did not expect."
+    if category == "browser":
+        return "A browser extension may be able to observe or alter browsing activity."
+    if category in {"process", "startup", "installed_app"}:
+        return "Software on this PC may be proxy, bandwidth-sharing, or data-routing related."
+    return "This local privacy signal needs review."
+
+
+def _watchdog_safe_action(item: dict[str, Any]) -> str:
+    category = str(item.get("category", ""))
+    if category == "network":
+        return "Open Windows proxy settings"
+    if category == "browser":
+        return "Open browser extensions"
+    if category == "startup":
+        return "Open Startup Apps"
+    if category in {"process", "installed_app"}:
+        return "Open Apps settings"
+    return "Copy fix instructions"
+
+
 def _friendly_mode(item: dict[str, Any]) -> str:
     mode = str(item.get("action_mode") or "")
     status = str(item.get("status") or "")
@@ -249,6 +334,7 @@ class SupargusDesktop:
         self.custom_targets: list[Any] = []
         self.action_items: list[dict[str, Any]] = []
         self.review_items: list[dict[str, Any]] = []
+        self.watchdog_items: list[dict[str, Any]] = []
         self.guide_status_labels: dict[str, "tk.Label"] = {}
         self.state: dict[str, Any] = {}
 
@@ -261,9 +347,12 @@ class SupargusDesktop:
         self.custom_url_var = tk.StringVar(value="")
         self.custom_reason_var = tk.StringVar(value="personal data exposed")
         self.status_var = tk.StringVar(value="Ready")
-        self.guide_cta_var = tk.StringVar(value="Run guided scan")
+        self.guide_cta_var = tk.StringVar(value="Run full privacy check")
         self.risk_headline_var = tk.StringVar(value="Run a privacy check")
         self.risk_body_var = tk.StringVar(value="Supargus will explain what it found here.")
+        self.scan_progress_var = tk.StringVar(value="Ready when you are.")
+        self.gmail_email_var = tk.StringVar(value="")
+        self.gmail_password_var = tk.StringVar(value="")
 
         self.metric_vars = {
             "brokers": tk.StringVar(value="0"),
@@ -383,7 +472,7 @@ class SupargusDesktop:
             ("setup", "Setup"),
             ("home", "Dashboard"),
             ("guide", "Guide"),
-            ("cleanup", "Cleanup"),
+            ("cleanup", "Data Brokers"),
             ("watchdog", "This PC"),
             ("removals", "Removals"),
             ("advanced", "Advanced"),
@@ -706,6 +795,28 @@ class SupargusDesktop:
         ):
             self._insight_card(proof, title, body, mode).grid(row=0, column=idx, sticky="nsew", padx=(0 if idx == 0 else 8, 0))
 
+        hero = tk.Frame(score_card, bg=COLORS["surface"])
+        hero.grid(row=4, column=0, columnspan=2, sticky="ew", padx=24, pady=(0, 20))
+        hero.columnconfigure(0, weight=1)
+        self.full_check_button = tk.Button(
+            hero,
+            text="Run full privacy check",
+            command=lambda: self.run_action("workflow"),
+            bg=COLORS["blue"],
+            fg="#ffffff",
+            activebackground=COLORS["blue_dark"],
+            activeforeground="#ffffff",
+            relief="flat",
+            bd=0,
+            padx=34,
+            pady=16,
+            cursor="hand2",
+            font=("Segoe UI", 14, "bold"),
+        )
+        self.full_check_button.grid(row=0, column=0)
+        self.buttons.append(self.full_check_button)
+        tk.Label(hero, textvariable=self.scan_progress_var, bg=COLORS["surface"], fg=COLORS["muted"], font=("Segoe UI", 10)).grid(row=1, column=0, pady=(10, 0))
+
         self.action_badges: dict[str, tk.Label] = {}
         self._home_action(left, 1, 0, "Scan exposure", "Check data brokers and people-search sites.", "broker_scan", "Scan now", primary=True)
         self._home_action(left, 1, 1, "Prepare removals", "Create request drafts you can inspect.", "prepare_requests", "Prepare")
@@ -807,7 +918,7 @@ class SupargusDesktop:
         safe_button = self._button(actions, "Automate safe steps", lambda: self.run_action("safe_actions"))
         safe_button.pack(anchor="w", padx=20, pady=(0, 10))
         self.buttons.append(safe_button)
-        self._button(actions, "Open cleanup view", lambda: self.show_page("cleanup")).pack(anchor="w", padx=20, pady=(0, 18))
+        self._button(actions, "Open Data Brokers", lambda: self.show_page("cleanup")).pack(anchor="w", padx=20, pady=(0, 18))
 
         privacy = self._card(page, 2, 1, padx=(0, 0), pady=(0, 14))
         tk.Label(privacy, text="Privacy guardrail", bg=COLORS["surface"], fg=COLORS["ink"], font=("Segoe UI", 13, "bold")).pack(anchor="w", padx=20, pady=(18, 4))
@@ -859,22 +970,20 @@ class SupargusDesktop:
         page = self._page("cleanup")
         page.columnconfigure(0, weight=1)
         page.rowconfigure(3, weight=1)
-        self._section_header(page, "Data broker cleanup", "See likely exposure, then create removal drafts you can review.")
+        self._section_header(page, "Data Brokers", "Places where Supargus found or prepared a privacy-removal action for your data.")
 
         actions = tk.Frame(page, bg=COLORS["bg"])
         actions.grid(row=1, column=0, sticky="ew", pady=(0, 12))
         for text, action, primary in (
-            ("Scan brokers", "broker_scan", True),
-            ("Prepare removals", "prepare_requests", False),
-            ("Build form queue", "form_queue", False),
-            ("Build review queue", "review_queue", False),
-            ("Build action plan", "action_plan", False),
-            ("Automate safe steps", "safe_actions", False),
+            ("Run full privacy check", "workflow", True),
+            ("Prepare removal options", "safe_actions", False),
+            ("Build approval queue", "review_queue", False),
             ("Preview emails", "mail_preview", False),
         ):
             button = self._button(actions, text, lambda value=action: self.run_action(value), primary=primary)
             button.pack(side="left", padx=(0, 10))
             self.buttons.append(button)
+        self._button(actions, "Open Removals", lambda: self.show_page("removals")).pack(side="left", padx=(0, 10))
 
         explain = tk.Frame(page, bg=COLORS["bg"])
         explain.grid(row=2, column=0, sticky="ew", pady=(0, 12))
@@ -892,32 +1001,41 @@ class SupargusDesktop:
         table_card = self._card(page, 3, 0, padx=(0, 0))
         table_card.rowconfigure(0, weight=1)
         table_card.columnconfigure(0, weight=1)
-        self.broker_tree = self._tree(table_card, ("broker", "action", "status", "confidence", "score", "url"))
+        self.broker_tree = self._tree(table_card, ("place", "what_was_found", "best_next_step", "open"))
 
     def _build_watchdog_page(self) -> None:
         page = self._page("watchdog")
         page.columnconfigure(0, weight=1)
         page.rowconfigure(2, weight=1)
-        self._section_header(page, "This PC", "Look for local proxy, extension, startup, and bandwidth-sharing risks.")
+        self._section_header(page, "This PC", "See exactly what local privacy signals were found and the safest next step.")
 
         top = tk.Frame(page, bg=COLORS["bg"])
         top.grid(row=1, column=0, sticky="ew", pady=(0, 12))
         button = self._button(top, "Scan this PC", lambda: self.run_action("watchdog"), primary=True)
         button.pack(side="left")
         self.buttons.append(button)
-        tk.Label(top, text="No action is taken automatically. Findings are review-only.", bg=COLORS["bg"], fg=COLORS["muted"], font=("Segoe UI", 10)).pack(side="left", padx=14)
+        tk.Label(top, text="Safe fixes open the relevant Windows or browser setting for you to review.", bg=COLORS["bg"], fg=COLORS["muted"], font=("Segoe UI", 10)).pack(side="left", padx=14)
 
         card = self._card(page, 2, 0, padx=(0, 0))
-        card.rowconfigure(0, weight=1)
+        card.rowconfigure(2, weight=1)
         card.columnconfigure(0, weight=1)
-        self.watchdog_text = self._text_panel(card, dark=False)
+        tk.Label(card, text="PC findings", bg=COLORS["surface"], fg=COLORS["ink"], font=("Segoe UI", 14, "bold")).grid(row=0, column=0, sticky="w", padx=18, pady=(16, 4))
+        controls = tk.Frame(card, bg=COLORS["surface"])
+        controls.grid(row=1, column=0, sticky="ew", padx=18, pady=(4, 12))
+        self._button(controls, "Protect me", self._protect_selected_watchdog, primary=True).pack(side="left", padx=(0, 8))
+        self._button(controls, "Copy fix", self._copy_selected_watchdog_fix).pack(side="left")
+        body = tk.Frame(card, bg=COLORS["surface"])
+        body.grid(row=2, column=0, sticky="nsew", padx=18, pady=(0, 18))
+        body.columnconfigure(0, weight=1)
+        body.rowconfigure(0, weight=1)
+        self.watchdog_tree = self._tree(body, ("finding", "what_it_means", "safe_action"))
 
     def _build_removals_page(self) -> None:
         page = self._page("removals")
         page.columnconfigure(0, weight=1)
         page.columnconfigure(1, weight=1)
         page.rowconfigure(2, weight=1)
-        self._section_header(page, "Removal workbench", "Review form tasks and add custom removal targets that are outside the broker registry.")
+        self._section_header(page, "Removals", "Send approved emails, copy request text, or open website forms from one place.")
 
         self._build_forms_panel(page)
         self._build_review_panel(page)
@@ -926,21 +1044,30 @@ class SupargusDesktop:
     def _build_forms_panel(self, page: "tk.Frame") -> None:
         card = self._card(page, 1, 0)
         card.columnconfigure(0, weight=1)
-        card.rowconfigure(2, weight=1)
-        tk.Label(card, text="Manual form queue", bg=COLORS["surface"], fg=COLORS["ink"], font=("Segoe UI", 14, "bold")).grid(row=0, column=0, sticky="w", padx=18, pady=(16, 0))
+        card.rowconfigure(3, weight=1)
+        tk.Label(card, text="Website form tasks", bg=COLORS["surface"], fg=COLORS["ink"], font=("Segoe UI", 14, "bold")).grid(row=0, column=0, sticky="w", padx=18, pady=(16, 0))
+        tk.Label(
+            card,
+            text="These sites need their opt-out form opened. Copy the prepared request text, paste it into the form, then mark it submitted.",
+            bg=COLORS["surface"],
+            fg=COLORS["muted"],
+            font=("Segoe UI", 10),
+            wraplength=430,
+            justify="left",
+        ).grid(row=1, column=0, sticky="w", padx=18, pady=(4, 0))
         controls = tk.Frame(card, bg=COLORS["surface"])
-        controls.grid(row=1, column=0, sticky="ew", padx=18, pady=12)
+        controls.grid(row=2, column=0, sticky="ew", padx=18, pady=12)
         for text, command, primary in (
-            ("Open form", self._open_selected_form, True),
-            ("Copy request", self._copy_selected_form, False),
+            ("Open website form", self._open_selected_form, True),
+            ("Copy request text", self._copy_selected_form, False),
             ("Mark submitted", self._mark_selected_form_submitted, False),
         ):
             self._button(controls, text, command, primary=primary).pack(side="left", padx=(0, 8))
         body = tk.Frame(card, bg=COLORS["surface"])
-        body.grid(row=2, column=0, sticky="nsew", padx=18, pady=(0, 18))
+        body.grid(row=3, column=0, sticky="nsew", padx=18, pady=(0, 18))
         body.columnconfigure(0, weight=1)
         body.rowconfigure(0, weight=1)
-        self.forms_tree = self._tree(body, ("broker", "status", "url"))
+        self.forms_tree = self._tree(body, ("place", "what_to_do", "website"))
 
     def _build_custom_panel(self, page: "tk.Frame") -> None:
         card = self._card(page, 1, 1, rowspan=2, padx=(0, 0))
@@ -971,8 +1098,8 @@ class SupargusDesktop:
     def _build_review_panel(self, page: "tk.Frame") -> None:
         card = self._card(page, 2, 0)
         card.columnconfigure(0, weight=1)
-        card.rowconfigure(3, weight=1)
-        tk.Label(card, text="Review queue", bg=COLORS["surface"], fg=COLORS["ink"], font=("Segoe UI", 14, "bold")).grid(row=0, column=0, sticky="w", padx=18, pady=(16, 0))
+        card.rowconfigure(4, weight=1)
+        tk.Label(card, text="Email requests", bg=COLORS["surface"], fg=COLORS["ink"], font=("Segoe UI", 14, "bold")).grid(row=0, column=0, sticky="w", padx=18, pady=(16, 0))
         summary = tk.Frame(card, bg=COLORS["surface"])
         summary.grid(row=1, column=0, sticky="ew", padx=18, pady=(10, 0))
         self._pill(summary, "Pending", bg=COLORS["yellow_soft"], fg=COLORS["yellow_dark"]).pack(side="left")
@@ -984,14 +1111,28 @@ class SupargusDesktop:
         for text, command, primary in (
             ("Approve", self._approve_selected_review, True),
             ("Skip", self._skip_selected_review, False),
-            ("Copy draft", self._copy_selected_review, False),
+            ("Copy email", self._copy_selected_review, False),
         ):
             self._button(controls, text, command, primary=primary).pack(side="left", padx=(0, 8))
+        gmail = tk.Frame(card, bg=COLORS["surface_alt"], highlightbackground=COLORS["line"], highlightthickness=1)
+        gmail.grid(row=3, column=0, sticky="ew", padx=18, pady=(0, 12))
+        gmail.columnconfigure(1, weight=1)
+        gmail.columnconfigure(3, weight=1)
+        tk.Label(gmail, text="Gmail app password", bg=COLORS["surface_alt"], fg=COLORS["ink"], font=("Segoe UI", 10, "bold")).grid(row=0, column=0, columnspan=4, sticky="w", padx=12, pady=(10, 2))
+        tk.Label(gmail, text="Email", bg=COLORS["surface_alt"], fg=COLORS["muted"], font=("Segoe UI", 9, "bold")).grid(row=1, column=0, sticky="w", padx=12, pady=(6, 10))
+        tk.Entry(gmail, textvariable=self.gmail_email_var, relief="solid", bd=1, font=("Segoe UI", 10)).grid(row=1, column=1, sticky="ew", padx=(0, 10), pady=(6, 10), ipady=5)
+        tk.Label(gmail, text="App password", bg=COLORS["surface_alt"], fg=COLORS["muted"], font=("Segoe UI", 9, "bold")).grid(row=1, column=2, sticky="w", padx=(0, 8), pady=(6, 10))
+        tk.Entry(gmail, textvariable=self.gmail_password_var, show="*", relief="solid", bd=1, font=("Segoe UI", 10)).grid(row=1, column=3, sticky="ew", padx=(0, 10), pady=(6, 10), ipady=5)
+        save_button = self._button(gmail, "Save Gmail", self._save_gmail_smtp)
+        save_button.grid(row=1, column=4, padx=(0, 8), pady=(6, 10))
+        send_button = self._button(gmail, "Send approved", lambda: self.run_action("mail_send"), primary=True)
+        send_button.grid(row=1, column=5, padx=(0, 12), pady=(6, 10))
+        self.buttons.extend([save_button, send_button])
         body = tk.Frame(card, bg=COLORS["surface"])
-        body.grid(row=3, column=0, sticky="nsew", padx=18, pady=(0, 18))
+        body.grid(row=4, column=0, sticky="nsew", padx=18, pady=(0, 18))
         body.columnconfigure(0, weight=1)
         body.rowconfigure(0, weight=1)
-        self.review_tree = self._tree(body, ("status", "broker", "delivery", "destination"))
+        self.review_tree = self._tree(body, ("state", "place", "how_to_send", "destination"))
 
     def _build_advanced_page(self) -> None:
         page = self._page("advanced")
@@ -1043,14 +1184,24 @@ class SupargusDesktop:
         tree = ttk.Treeview(parent, columns=columns, show="headings", selectmode="browse")
         widths = {
             "broker": 190,
+            "place": 190,
             "action": 165,
             "status": 120,
+            "state": 150,
             "confidence": 110,
             "score": 70,
             "url": 280,
+            "open": 260,
+            "website": 260,
             "destination": 260,
             "next_step": 360,
             "title": 260,
+            "what_was_found": 300,
+            "what_to_do": 240,
+            "what_it_means": 340,
+            "finding": 230,
+            "safe_action": 220,
+            "how_to_send": 140,
             "request_id": 155,
             "next_follow_up": 180,
         }
@@ -1103,6 +1254,7 @@ class SupargusDesktop:
             )
             if not approved:
                 return
+        self.scan_progress_var.set(self._action_progress_text(action))
         self._set_running(True, f"Running {action}...")
         payload = self._payload(action)
         if extra:
@@ -1117,6 +1269,18 @@ class SupargusDesktop:
                 self.queue.put(("action_error", action, str(exc)))
 
         threading.Thread(target=worker, daemon=True).start()
+
+    def _action_progress_text(self, action: str) -> str:
+        labels = {
+            "workflow": "Checking broker sites, preparing removal drafts, scanning this PC, and bundling receipts...",
+            "broker_scan": "Checking public broker pages and marking private brokers as request-only...",
+            "watchdog": "Checking this PC for proxy, extension, startup, and bandwidth-sharing signals...",
+            "prepare_requests": "Writing removal requests you can review before anything is sent...",
+            "safe_actions": "Preparing drafts, forms, tracker records, follow-ups, and receipts without sending email...",
+            "mail_send": "Sending only approved email requests through your configured account...",
+            "bundle": "Packaging reports, drafts, tracker state, and receipts...",
+        }
+        return labels.get(action, f"Running {action.replace('_', ' ')}...")
 
     def refresh(self) -> None:
         self.state = build_state(self.workspace_var.get())
@@ -1250,8 +1414,48 @@ class SupargusDesktop:
         self._set_action_badge("watchdog", watchdog > 0)
         self._set_action_badge("bundle", drafts > 0 and bundle == 0)
 
+    def _report_relevant_details(self) -> str:
+        public_hits = []
+        request_only = []
+        for item in self.state.get("matches", []):
+            row = _broker_user_row(item)
+            if not row:
+                continue
+            place, what, _next_step, open_url = row
+            line = f"- {place}: {what}"
+            if open_url:
+                line += f" ({open_url})"
+            if str(item.get("status") or "") == "possible_match" or str(item.get("action_mode") or "") == "verified_public":
+                public_hits.append(line)
+            elif str(item.get("action_mode") or "") == "request_only" or str(item.get("status") or "") in {"fetch_error", "needs_manual_review"}:
+                request_only.append(line)
+
+        pc_findings = [
+            f"- {item.get('title', 'PC finding')}: {_watchdog_meaning(item)}"
+            for item in self.state.get("findings", [])
+        ]
+
+        lines: list[str] = []
+        if public_hits:
+            lines.append("Sites where your data may be visible:")
+            lines.extend(public_hits[:8])
+        if request_only:
+            if lines:
+                lines.append("")
+            lines.append("Brokers Supargus could not verify directly:")
+            lines.extend(request_only[:8])
+        if pc_findings:
+            if lines:
+                lines.append("")
+            lines.append("This PC findings:")
+            lines.extend(pc_findings[:8])
+        return "\n".join(lines)
+
     def _show_plain_english_report(self) -> None:
         report = _plain_english_report(self.state.get("summary", {}), self.state.get("exists", {}))
+        relevant = self._report_relevant_details()
+        if relevant:
+            report = f"{report}\n\nRelevant findings:\n{relevant}"
         if tk is None:
             return
         popup = tk.Toplevel(self.root)
@@ -1269,12 +1473,12 @@ class SupargusDesktop:
 
     def _open_required_action(self) -> None:
         summary = self.state.get("summary", {})
-        if _summary_int(summary, "form_tasks") or _summary_int(summary, "review_pending"):
-            self.show_page("removals")
-        elif (_summary_int(summary, "possible_matches") or _summary_int(summary, "request_only")) and not _summary_int(summary, "request_drafts"):
+        if _summary_int(summary, "possible_matches") or _summary_int(summary, "request_only"):
             self.show_page("cleanup")
         elif _summary_int(summary, "watchdog_findings"):
             self.show_page("watchdog")
+        elif _summary_int(summary, "form_tasks") or _summary_int(summary, "review_pending"):
+            self.show_page("removals")
         elif not _summary_int(summary, "brokers_checked"):
             self.run_action("workflow")
         else:
@@ -1320,11 +1524,11 @@ class SupargusDesktop:
             self.guide_cta_var.set("Start setup")
             body = "Create a privacy profile so Supargus knows what to search for."
         elif states["scan"] != "Done":
-            self.guide_cta_var.set("Run guided scan")
+            self.guide_cta_var.set("Run full privacy check")
             body = "Start with a broker scan and local PC check, then let Supargus prepare safe local artifacts."
         elif states["review"] != "Done":
-            self.guide_cta_var.set("Build action plan")
-            body = "Turn the scan results into a plain-English cleanup queue before approving anything."
+            self.guide_cta_var.set("Open Data Brokers")
+            body = "Review the sites Supargus found or could not verify, then move into Removals for forms and emails."
         elif int(summary.get("review_pending", 0) or 0) or int(summary.get("form_tasks", 0) or 0):
             self.guide_cta_var.set("Open Removals")
             body = "Finish manual forms, approve email drafts, and mark submitted work from the Removals workbench."
@@ -1342,7 +1546,7 @@ class SupargusDesktop:
         elif states["scan"] != "Done":
             self.run_action("workflow")
         elif states["review"] != "Done":
-            self.run_action("action_plan")
+            self.show_page("cleanup")
         elif int(summary.get("review_pending", 0) or 0) or int(summary.get("form_tasks", 0) or 0):
             self.show_page("removals")
         else:
@@ -1351,30 +1555,39 @@ class SupargusDesktop:
     def _populate_brokers(self, items: list[dict[str, Any]]) -> None:
         self._clear_tree(self.broker_tree)
         if not items:
-            self.broker_tree.insert("", "end", values=("No broker scan yet", "Run Scan brokers", "", "", "", ""))
+            self.broker_tree.insert("", "end", values=("No scan yet", "Run full privacy check", "Start from Dashboard", ""))
             return
+        shown = 0
         for item in items:
+            row = _broker_user_row(item)
+            if not row:
+                continue
             self.broker_tree.insert(
                 "",
                 "end",
-                values=(
-                    item.get("broker_name", ""),
-                    _friendly_mode(item),
-                    item.get("status", ""),
-                    item.get("confidence", ""),
-                    item.get("score", ""),
-                    item.get("search_url", ""),
-                ),
+                values=row,
             )
+            shown += 1
+        if not shown:
+            self.broker_tree.insert("", "end", values=("No relevant broker hits", "No public matches or request-only tasks found", "Re-run later to monitor changes", ""))
 
     def _populate_watchdog(self, items: list[dict[str, Any]]) -> None:
-        self.watchdog_text.configure(state="normal")
-        self.watchdog_text.delete("1.0", "end")
+        self.watchdog_items = list(items)
+        self._clear_tree(self.watchdog_tree)
         if not items:
-            self.watchdog_text.insert("end", "No watchdog data yet. Run Scan this PC.")
+            self.watchdog_tree.insert("", "end", values=("No PC scan yet", "Run Scan this PC", ""))
+            return
         for item in items:
-            self.watchdog_text.insert("end", f"{item.get('severity', '').upper()}  {item.get('title', '')}\n{item.get('detail', '')}\nEvidence: {item.get('evidence', '')}\n\n")
-        self.watchdog_text.configure(state="disabled")
+            self.watchdog_tree.insert(
+                "",
+                "end",
+                iid=f"watchdog-{len(self.watchdog_tree.get_children())}",
+                values=(
+                    item.get("title", "PC finding"),
+                    _watchdog_meaning(item),
+                    _watchdog_safe_action(item),
+                ),
+            )
 
     def _populate_tracker(self, items: list[dict[str, Any]]) -> None:
         if not hasattr(self, "tracker_tree"):
@@ -1388,7 +1601,7 @@ class SupargusDesktop:
             return
         self._clear_tree(self.progress_tree)
         if not items:
-            self.progress_tree.insert("", "end", values=("No requests yet", "Run guided scan", "", ""))
+            self.progress_tree.insert("", "end", values=("No requests yet", "Run full privacy check", "", ""))
             return
         for item in items[:8]:
             self.progress_tree.insert(
@@ -1408,7 +1621,7 @@ class SupargusDesktop:
         self.action_items = list(items)
         self._clear_tree(self.action_tree)
         if not items:
-            self.action_tree.insert("", "end", values=("none", "start", "No action plan yet", "Run guided scan or Build action plan"))
+            self.action_tree.insert("", "end", values=("none", "start", "No action plan yet", "Run full privacy check"))
             return
         for idx, item in enumerate(items[:8]):
             self.action_tree.insert(
@@ -1431,10 +1644,10 @@ class SupargusDesktop:
             self.form_tasks = []
         self._clear_tree(self.forms_tree)
         if not self.form_tasks:
-            self.forms_tree.insert("", "end", iid="form-empty", values=("No form tasks yet", "Build form queue", ""))
+            self.forms_tree.insert("", "end", iid="form-empty", values=("No website forms yet", "Run full privacy check", ""))
             return
         for idx, task in enumerate(self.form_tasks):
-            self.forms_tree.insert("", "end", iid=f"form-{idx}", values=(task.broker_name, task.status, task.opt_out_url))
+            self.forms_tree.insert("", "end", iid=f"form-{idx}", values=(task.broker_name, _task_label(task.status), task.opt_out_url))
 
     def _populate_review_queue(self, items: list[dict[str, Any]]) -> None:
         if not hasattr(self, "review_tree"):
@@ -1442,7 +1655,7 @@ class SupargusDesktop:
         self.review_items = list(items)
         self._clear_tree(self.review_tree)
         if not items:
-            self.review_tree.insert("", "end", iid="review-empty", values=("pending", "Build review queue", "", ""))
+            self.review_tree.insert("", "end", iid="review-empty", values=("No emails yet", "Run full privacy check", "", ""))
             return
         for idx, item in enumerate(items):
             destination = item.get("to_email") or item.get("opt_out_url") or item.get("profile_url") or ""
@@ -1450,7 +1663,7 @@ class SupargusDesktop:
                 "",
                 "end",
                 iid=f"review-{idx}",
-                values=(item.get("status", ""), item.get("broker_name", ""), item.get("delivery", ""), destination),
+                values=(_review_status_label(str(item.get("status", ""))), item.get("broker_name", ""), _delivery_label(item), destination),
             )
 
     def _selected_review_item(self) -> dict[str, Any] | None:
@@ -1486,17 +1699,104 @@ class SupargusDesktop:
             return
         path = Path(str(item.get("file_path", "")))
         body = path.read_text(encoding="utf-8") if path.exists() else ""
+        destination = item.get("to_email") or item.get("opt_out_url") or ""
+        subject = item.get("subject") or f"Privacy removal request for {item.get('broker_name', 'data broker')}"
         text = (
             f"{item.get('broker_name', '')}\n"
-            f"Status: {item.get('status', '')}\n"
-            f"Delivery: {item.get('delivery', '')}\n"
-            f"Destination: {item.get('to_email') or item.get('opt_out_url') or ''}\n\n"
+            f"To: {destination}\n"
+            f"Subject: {subject}\n"
+            f"Description: Request removal of my personal information from this service.\n"
+            f"State: {_review_status_label(str(item.get('status', '')))}\n\n"
             f"{body}"
         )
         self.root.clipboard_clear()
         self.root.clipboard_append(text)
         self.status_var.set("Copied review draft")
         self._log(f"Copied review draft for {item.get('broker_name', '')}.")
+
+    def _save_gmail_smtp(self) -> None:
+        try:
+            config = gmail_smtp_config(self.gmail_email_var.get(), self.gmail_password_var.get())
+            path = Path(self.smtp_var.get() or Path(self.workspace_var.get()) / "smtp.gmail.json")
+            out = save_smtp_config(config, path, force=True)
+            self.smtp_var.set(str(out))
+            self.gmail_password_var.set("")
+            self.status_var.set("Gmail sending saved locally")
+            self._log(f"Saved Gmail SMTP config locally:\n{out}\nOnly approved review items will be sent.")
+        except Exception as exc:
+            self.status_var.set("Gmail setup needs attention")
+            self._log(f"Could not save Gmail setup:\n{exc}")
+            if messagebox:
+                messagebox.showerror("Supargus", str(exc))
+
+    def _selected_watchdog_item(self) -> dict[str, Any] | None:
+        if not hasattr(self, "watchdog_tree"):
+            return None
+        selected = self.watchdog_tree.selection()
+        if not selected:
+            return None
+        try:
+            index = int(selected[0].split("-", 1)[1])
+            return self.watchdog_items[index]
+        except Exception:
+            return None
+
+    def _protect_selected_watchdog(self) -> None:
+        item = self._selected_watchdog_item()
+        if not item:
+            self._log("Select a PC finding first.")
+            return
+        category = str(item.get("category", ""))
+        target = ""
+        try:
+            if category == "network":
+                target = "Windows proxy settings"
+                if sys.platform == "win32":
+                    os.startfile("ms-settings:network-proxy")  # type: ignore[attr-defined]
+                else:
+                    webbrowser.open("about:preferences#general")
+            elif category == "browser":
+                target = "browser extensions"
+                evidence = str(item.get("evidence", "")).lower()
+                webbrowser.open("edge://extensions" if "edge" in evidence else "chrome://extensions")
+            elif category == "startup":
+                target = "Startup Apps"
+                if sys.platform == "win32":
+                    os.startfile("ms-settings:startupapps")  # type: ignore[attr-defined]
+                else:
+                    self._copy_selected_watchdog_fix()
+                    return
+            elif category in {"process", "installed_app"}:
+                target = "Apps settings"
+                if sys.platform == "win32":
+                    os.startfile("ms-settings:appsfeatures")  # type: ignore[attr-defined]
+                else:
+                    self._copy_selected_watchdog_fix()
+                    return
+            else:
+                self._copy_selected_watchdog_fix()
+                return
+            self.status_var.set(f"Opened {target}")
+            self._log(f"Opened {target} for: {item.get('title', 'PC finding')}")
+        except Exception as exc:
+            self._log(f"Could not open settings automatically:\n{exc}")
+            self._copy_selected_watchdog_fix()
+
+    def _copy_selected_watchdog_fix(self) -> None:
+        item = self._selected_watchdog_item()
+        if not item:
+            self._log("Select a PC finding first.")
+            return
+        text = (
+            f"{item.get('title', 'PC finding')}\n"
+            f"What it could mean: {_watchdog_meaning(item)}\n"
+            f"Suggested fix: {item.get('remediation') or _watchdog_safe_action(item)}\n"
+            f"Evidence:\n{item.get('evidence', '')}\n"
+        )
+        self.root.clipboard_clear()
+        self.root.clipboard_append(text)
+        self.status_var.set("Copied PC fix")
+        self._log(f"Copied PC fix:\n{text}")
 
     def _selected_action_item(self) -> dict[str, Any] | None:
         if not hasattr(self, "action_tree"):
@@ -1578,7 +1878,14 @@ class SupargusDesktop:
         if not task:
             self._log("Select a form task first.")
             return
-        text = f"Broker: {task.broker_name}\nOpt-out form: {task.opt_out_url}\nProfile: {task.profile_url}\n\n{task.request_body.strip()}\n"
+        text = (
+            f"Broker: {task.broker_name}\n"
+            f"Opt-out form: {task.opt_out_url}\n"
+            f"Subject: Privacy removal request for {task.broker_name}\n"
+            f"Description: Request removal of my personal information from this service.\n"
+            f"Profile: {task.profile_url}\n\n"
+            f"{task.request_body.strip()}\n"
+        )
         self.root.clipboard_clear()
         self.root.clipboard_append(text)
         self.status_var.set("Copied request to clipboard")
@@ -1669,9 +1976,13 @@ class SupargusDesktop:
                 self._log(f"{action} complete\n{json.dumps(value, indent=2)}")
                 self.refresh()
                 self._set_running(False, f"{action} complete")
+                self.scan_progress_var.set("Privacy check complete. Review the findings below.")
+                if action == "workflow":
+                    self._show_plain_english_report()
             else:
                 self._log(f"ERROR {action}\n{value}")
                 self._set_running(False, f"{action} failed")
+                self.scan_progress_var.set(f"{action.replace('_', ' ')} failed. Check Advanced logs.")
                 if messagebox:
                     messagebox.showerror("Supargus", str(value))
         self.root.after(100, self._drain_queue)
