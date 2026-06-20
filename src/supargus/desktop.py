@@ -28,10 +28,10 @@ except Exception:  # pragma: no cover - depends on local Python GUI support.
 
 
 GUIDE_STEPS = (
-    ("1", "Set up your identity", "Use a local identity vault or sample profile so Supargus knows what to search for."),
-    ("2", "Run a verified scan", "Supargus tries lightweight public searches first, then marks private brokers as request-only."),
-    ("3", "Review evidence", "Check matches, blocked searches, and this-PC findings before sending anything."),
-    ("4", "Take action", "Prepare removals, build form tasks, preview emails, and export receipts from your machine."),
+    ("identity", "1", "Set up your identity", "Use a local identity vault or sample profile so Supargus knows what to search for."),
+    ("scan", "2", "Run a verified scan", "Supargus tries lightweight public searches first, then marks private brokers as request-only."),
+    ("review", "3", "Review evidence", "Check matches, blocked searches, and this-PC findings before sending anything."),
+    ("action", "4", "Take action", "Prepare removals, build form tasks, preview emails, and export receipts from your machine."),
 )
 
 
@@ -161,6 +161,7 @@ class SupargusDesktop:
         self.custom_targets: list[Any] = []
         self.action_items: list[dict[str, Any]] = []
         self.review_items: list[dict[str, Any]] = []
+        self.guide_status_labels: dict[str, "tk.Label"] = {}
         self.state: dict[str, Any] = {}
 
         workspace_path = Path(workspace)
@@ -172,6 +173,7 @@ class SupargusDesktop:
         self.custom_url_var = tk.StringVar(value="")
         self.custom_reason_var = tk.StringVar(value="personal data exposed")
         self.status_var = tk.StringVar(value="Ready")
+        self.guide_cta_var = tk.StringVar(value="Run guided scan")
 
         self.metric_vars = {
             "brokers": tk.StringVar(value="0"),
@@ -461,14 +463,19 @@ class SupargusDesktop:
         checklist = self._card(page, 1, 0, rowspan=2)
         checklist.columnconfigure(0, weight=1)
         tk.Label(checklist, text="What happens first", bg=COLORS["surface"], fg=COLORS["ink"], font=("Segoe UI", 15, "bold")).pack(anchor="w", padx=20, pady=(18, 8))
-        for number, title, body in GUIDE_STEPS:
+        for key, number, title, body in GUIDE_STEPS:
             row = tk.Frame(checklist, bg=COLORS["surface"])
             row.pack(fill="x", padx=20, pady=8)
             badge = tk.Label(row, text=number, bg=COLORS["yellow_soft"], fg=COLORS["blue"], width=3, font=("Segoe UI", 10, "bold"))
             badge.pack(side="left", ipady=5)
             copy = tk.Frame(row, bg=COLORS["surface"])
             copy.pack(side="left", fill="x", expand=True, padx=(12, 0))
-            tk.Label(copy, text=title, bg=COLORS["surface"], fg=COLORS["ink"], font=("Segoe UI", 11, "bold")).pack(anchor="w")
+            title_row = tk.Frame(copy, bg=COLORS["surface"])
+            title_row.pack(fill="x")
+            tk.Label(title_row, text=title, bg=COLORS["surface"], fg=COLORS["ink"], font=("Segoe UI", 11, "bold")).pack(side="left")
+            status = self._pill(title_row, "Waiting", bg=COLORS["soft"], fg=COLORS["muted"])
+            status.pack(side="right")
+            self.guide_status_labels[key] = status
             tk.Label(copy, text=body, bg=COLORS["surface"], fg=COLORS["muted"], font=("Segoe UI", 9), wraplength=410, justify="left").pack(anchor="w", pady=(2, 0))
 
         actions = self._card(page, 1, 1, padx=(0, 0))
@@ -483,7 +490,12 @@ class SupargusDesktop:
             wraplength=360,
             justify="left",
         ).pack(anchor="w", padx=20, pady=(0, 16))
-        guide_button = self._button(actions, "Run guided scan", lambda: self.run_action("workflow"), primary=True)
+        self.guide_next_title = tk.Label(actions, text="Recommended next", bg=COLORS["surface"], fg=COLORS["muted"], font=("Segoe UI", 9, "bold"))
+        self.guide_next_title.pack(anchor="w", padx=20, pady=(0, 2))
+        self.guide_next_body = tk.Label(actions, text="", bg=COLORS["surface"], fg=COLORS["ink"], font=("Segoe UI", 10, "bold"), wraplength=360, justify="left")
+        self.guide_next_body.pack(anchor="w", padx=20, pady=(0, 12))
+        guide_button = self._button(actions, "", self._run_tutorial_next, primary=True)
+        guide_button.configure(textvariable=self.guide_cta_var)
         guide_button.pack(anchor="w", padx=20, pady=(0, 10))
         self.buttons.append(guide_button)
         plan_button = self._button(actions, "Build action plan", lambda: self.run_action("action_plan"))
@@ -823,6 +835,7 @@ class SupargusDesktop:
 
         self._draw_score(score, label_color)
         self._set_next_step(summary)
+        self._update_guide(summary)
         self._populate_brokers(self.state["matches"])
         self._populate_watchdog(self.state["findings"])
         self._populate_tracker(self.state["tracker"])
@@ -872,6 +885,74 @@ class SupargusDesktop:
             body = "You have a baseline. Re-scan later to catch reappearances and export receipts when you need them."
         self.next_step_title.configure(text=title)
         self.next_step_body.configure(text=body)
+
+    def _guide_step_state(self, summary: dict[str, Any]) -> dict[str, str]:
+        identity_exists = Path(self.identity_var.get()).exists()
+        scan_done = int(summary.get("brokers_checked", 0) or 0) > 0
+        review_started = bool(
+            int(summary.get("action_items", 0) or 0)
+            or int(summary.get("review_pending", 0) or 0)
+            or int(summary.get("review_approved", 0) or 0)
+            or int(summary.get("form_tasks", 0) or 0)
+        )
+        action_started = bool(
+            int(summary.get("tracker_records", 0) or 0)
+            or int(summary.get("request_drafts", 0) or 0)
+            or int(summary.get("bundle_size", 0) or 0)
+        )
+        return {
+            "identity": "Done" if identity_exists else "Next",
+            "scan": "Done" if scan_done else ("Next" if identity_exists else "Waiting"),
+            "review": "Done" if review_started else ("Next" if scan_done else "Waiting"),
+            "action": "Done" if action_started else ("Next" if review_started else "Waiting"),
+        }
+
+    def _set_guide_status(self, key: str, status: str) -> None:
+        label = self.guide_status_labels.get(key)
+        if not label:
+            return
+        bg, fg = {
+            "Done": (COLORS["green_soft"], COLORS["green"]),
+            "Next": (COLORS["yellow_soft"], COLORS["yellow_dark"]),
+            "Waiting": (COLORS["soft"], COLORS["muted"]),
+        }.get(status, (COLORS["soft"], COLORS["muted"]))
+        label.configure(text=status, bg=bg, fg=fg)
+
+    def _update_guide(self, summary: dict[str, Any]) -> None:
+        states = self._guide_step_state(summary)
+        for key, status in states.items():
+            self._set_guide_status(key, status)
+        if states["identity"] != "Done":
+            self.guide_cta_var.set("Open local setup")
+            body = "Create or choose the identity file Supargus should use for this privacy check."
+        elif states["scan"] != "Done":
+            self.guide_cta_var.set("Run guided scan")
+            body = "Start with a broker scan and local PC check, then let Supargus prepare safe local artifacts."
+        elif states["review"] != "Done":
+            self.guide_cta_var.set("Build action plan")
+            body = "Turn the scan results into a plain-English cleanup queue before approving anything."
+        elif int(summary.get("review_pending", 0) or 0) or int(summary.get("form_tasks", 0) or 0):
+            self.guide_cta_var.set("Open review queue")
+            body = "Approve email requests, copy drafts, or open broker forms from the Removals workbench."
+        else:
+            self.guide_cta_var.set("Automate safe steps")
+            body = "Prepare drafts, tracker records, follow-ups, action plan, and receipts without sending email."
+        if hasattr(self, "guide_next_body"):
+            self.guide_next_body.configure(text=body)
+
+    def _run_tutorial_next(self) -> None:
+        summary = self.state.get("summary", {})
+        states = self._guide_step_state(summary)
+        if states["identity"] != "Done":
+            self.show_page("advanced")
+        elif states["scan"] != "Done":
+            self.run_action("workflow")
+        elif states["review"] != "Done":
+            self.run_action("action_plan")
+        elif int(summary.get("review_pending", 0) or 0) or int(summary.get("form_tasks", 0) or 0):
+            self.show_page("removals")
+        else:
+            self.run_action("safe_actions")
 
     def _populate_brokers(self, items: list[dict[str, Any]]) -> None:
         self._clear_tree(self.broker_tree)
