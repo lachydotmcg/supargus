@@ -276,6 +276,68 @@ def _broker_user_row(item: dict[str, Any]) -> tuple[str, str, str, str] | None:
     return None
 
 
+def _broker_match_fields(item: dict[str, Any]) -> list[str]:
+    return [str(value) for value in item.get("matched_fields", []) if value]
+
+
+def _broker_is_public_match(item: dict[str, Any]) -> bool:
+    return str(item.get("status") or "") == "possible_match" or str(item.get("action_mode") or "") == "verified_public"
+
+
+def _broker_is_review_only(item: dict[str, Any]) -> bool:
+    status = str(item.get("status") or "")
+    mode = str(item.get("action_mode") or "")
+    return mode in {"request_only", "public_unverified"} or status in {"fetch_error", "needs_manual_review"}
+
+
+def _broker_match_strength(item: dict[str, Any]) -> tuple[int, int, int, str]:
+    fields = set(_broker_match_fields(item))
+    field_weights = {
+        "email": 40,
+        "phone": 40,
+        "postal_code": 30,
+        "city": 20,
+        "state": 20,
+        "name": 15,
+        "username": 15,
+    }
+    field_score = sum(field_weights.get(field, 10) for field in fields)
+    confidence_rank = {"high": 3, "medium": 2, "low": 1}.get(str(item.get("confidence") or ""), 0)
+    return (
+        int(item.get("score", 0) or 0) + field_score,
+        len(fields),
+        confidence_rank,
+        str(item.get("broker_name") or "").lower(),
+    )
+
+
+def _broker_match_row(item: dict[str, Any]) -> tuple[str, str, str, str]:
+    place = str(item.get("broker_name") or item.get("broker_id") or "Unknown broker")
+    fields = _broker_match_fields(item)
+    matched = ", ".join(field.replace("_", " ") for field in fields) if fields else "profile details"
+    confidence = str(item.get("confidence") or "unknown").title()
+    score = int(item.get("score", 0) or 0)
+    return (
+        place,
+        f"Matched: {matched}",
+        f"{confidence} confidence ({score}/100)",
+        str(item.get("evidence_url") or item.get("search_url") or ""),
+    )
+
+
+def _broker_review_row(item: dict[str, Any]) -> tuple[str, str, str, str]:
+    row = _broker_user_row(item)
+    if row:
+        return row
+    place = str(item.get("broker_name") or item.get("broker_id") or "Unknown broker")
+    return (
+        place,
+        "Not a confirmed match",
+        "Keep for manual review or re-run later",
+        str(item.get("evidence_url") or item.get("search_url") or ""),
+    )
+
+
 def _watchdog_meaning(item: dict[str, Any]) -> str:
     category = str(item.get("category", ""))
     if category == "network":
@@ -338,12 +400,15 @@ class SupargusDesktop:
         self.review_items: list[dict[str, Any]] = []
         self.watchdog_items: list[dict[str, Any]] = []
         self.broker_items: list[dict[str, Any]] = []
+        self.broker_match_items: list[dict[str, Any]] = []
+        self.broker_review_items: list[dict[str, Any]] = []
         self.guide_status_labels: dict[str, "tk.Label"] = {}
         self.scan_step_labels: list["tk.Label"] = []
         self.state: dict[str, Any] = {}
         self.current_page = ""
         self.progress_token = 0
         self.progress_step_index = 0
+        self.broker_selection_scope = "matched"
 
         workspace_path = Path(workspace)
         self.workspace_var = tk.StringVar(value=str(workspace_path))
@@ -1034,9 +1099,24 @@ class SupargusDesktop:
             self._insight_card(explain, title, body, mode).grid(row=0, column=idx, sticky="nsew", padx=(0 if idx == 0 else 10, 0))
 
         table_card = self._card(page, 4, 0, padx=(0, 0))
-        table_card.rowconfigure(0, weight=1)
+        table_card.rowconfigure(1, weight=2)
+        table_card.rowconfigure(3, weight=1)
         table_card.columnconfigure(0, weight=1)
-        self.broker_tree = self._tree(table_card, ("place", "what_was_found", "best_next_step", "open"))
+        tk.Label(table_card, text="Matched your details", bg=COLORS["surface"], fg=COLORS["ink"], font=("Segoe UI", 14, "bold")).grid(row=0, column=0, sticky="w", padx=18, pady=(16, 4))
+        matched_body = tk.Frame(table_card, bg=COLORS["surface"])
+        matched_body.grid(row=1, column=0, sticky="nsew", padx=18, pady=(0, 14))
+        matched_body.columnconfigure(0, weight=1)
+        matched_body.rowconfigure(0, weight=1)
+        self.broker_tree = self._tree(matched_body, ("place", "matched_details", "confidence", "open"))
+
+        tk.Label(table_card, text="Needs manual or request-only review", bg=COLORS["surface"], fg=COLORS["muted"], font=("Segoe UI", 12, "bold")).grid(row=2, column=0, sticky="w", padx=18, pady=(4, 4))
+        review_body = tk.Frame(table_card, bg=COLORS["surface"])
+        review_body.grid(row=3, column=0, sticky="nsew", padx=18, pady=(0, 18))
+        review_body.columnconfigure(0, weight=1)
+        review_body.rowconfigure(0, weight=1)
+        self.broker_review_tree = self._tree(review_body, ("place", "why_not_matched", "next_step", "open"))
+        self.broker_tree.bind("<<TreeviewSelect>>", lambda _event: self._select_broker_section("matched"))
+        self.broker_review_tree.bind("<<TreeviewSelect>>", lambda _event: self._select_broker_section("review"))
 
     def _build_watchdog_page(self) -> None:
         page = self._page("watchdog")
@@ -1231,6 +1311,9 @@ class SupargusDesktop:
             "destination": 260,
             "next_step": 360,
             "title": 260,
+            "matched_details": 250,
+            "confidence": 180,
+            "why_not_matched": 300,
             "what_was_found": 300,
             "what_to_do": 240,
             "what_it_means": 340,
@@ -1669,37 +1752,89 @@ class SupargusDesktop:
 
     def _populate_brokers(self, items: list[dict[str, Any]]) -> None:
         self.broker_items = []
+        self.broker_match_items = []
+        self.broker_review_items = []
         self._clear_tree(self.broker_tree)
+        self._clear_tree(self.broker_review_tree)
         if not items:
             self.broker_tree.insert("", "end", values=("No scan yet", "Run full privacy check", "Start from Dashboard", ""))
+            self.broker_review_tree.insert("", "end", values=("No review-only brokers yet", "Run full privacy check", "", ""))
             return
-        for item in items:
-            row = _broker_user_row(item)
-            if not row:
-                continue
+
+        matches = sorted(
+            [item for item in items if _broker_is_public_match(item)],
+            key=_broker_match_strength,
+            reverse=True,
+        )
+        review_only = [
+            item
+            for item in items
+            if _broker_is_review_only(item) and not _broker_is_public_match(item)
+        ]
+
+        for item in matches:
+            self.broker_match_items.append(item)
             self.broker_items.append(item)
             self.broker_tree.insert(
                 "",
                 "end",
-                iid=f"broker-{len(self.broker_items) - 1}",
-                values=row,
+                iid=f"broker-match-{len(self.broker_match_items) - 1}",
+                values=_broker_match_row(item),
             )
-        if not self.broker_items:
-            self.broker_tree.insert("", "end", values=("No relevant broker hits", "No public matches or request-only tasks found", "Re-run later to monitor changes", ""))
+        if not self.broker_match_items:
+            self.broker_tree.insert("", "end", values=("No confirmed public matches", "No reachable page matched your identifiers", "Re-run later", ""))
+
+        for item in review_only:
+            self.broker_review_items.append(item)
+            self.broker_items.append(item)
+            self.broker_review_tree.insert(
+                "",
+                "end",
+                iid=f"broker-review-{len(self.broker_review_items) - 1}",
+                values=_broker_review_row(item),
+            )
+        if not self.broker_review_items:
+            self.broker_review_tree.insert("", "end", values=("No request-only items", "Everything actionable is in the matched list above", "", ""))
+
+    def _select_broker_section(self, selected: str) -> None:
+        active = self.broker_tree if selected == "matched" else self.broker_review_tree
+        if not active.selection():
+            return
+        self.broker_selection_scope = selected
+        other = self.broker_review_tree if selected == "matched" else self.broker_tree
+        try:
+            for item_id in other.selection():
+                other.selection_remove(item_id)
+        except tk.TclError:
+            return
 
     def _selected_broker_item(self) -> dict[str, Any] | None:
         if not hasattr(self, "broker_tree"):
             return None
         selected = self.broker_tree.selection()
-        if not selected and len(self.broker_items) == 1:
-            return self.broker_items[0]
-        if not selected:
-            return None
-        try:
-            index = int(selected[0].split("-", 1)[1])
-            return self.broker_items[index]
-        except Exception:
-            return None
+        review_selected = self.broker_review_tree.selection() if hasattr(self, "broker_review_tree") else ()
+        if self.broker_selection_scope == "review" and review_selected:
+            try:
+                index = int(review_selected[0].split("-", 2)[2])
+                return self.broker_review_items[index]
+            except Exception:
+                return None
+        if selected:
+            try:
+                index = int(selected[0].split("-", 2)[2])
+                return self.broker_match_items[index]
+            except Exception:
+                return None
+        if review_selected:
+            try:
+                index = int(review_selected[0].split("-", 2)[2])
+                return self.broker_review_items[index]
+            except Exception:
+                return None
+        actionable = self.broker_match_items or self.broker_review_items
+        if len(actionable) == 1:
+            return actionable[0]
+        return None
 
     def _matching_form_task(self, item: dict[str, Any]) -> FormTask | None:
         broker_id = str(item.get("broker_id", ""))

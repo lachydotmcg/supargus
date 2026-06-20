@@ -16,7 +16,18 @@ from supargus.bundle import export_bundle
 from supargus.cli import build_parser
 from supargus.config import WorkflowConfig, load_config, save_default_config
 from supargus.custom import add_custom_target, load_custom_targets, prepare_custom_requests, update_custom_status
-from supargus.desktop import DESKTOP_ACTIONS, _broker_user_row, _plain_english_report, _review_status_label, _task_label, _watchdog_meaning
+from supargus.desktop import (
+    DESKTOP_ACTIONS,
+    _broker_is_public_match,
+    _broker_is_review_only,
+    _broker_match_row,
+    _broker_match_strength,
+    _broker_user_row,
+    _plain_english_report,
+    _review_status_label,
+    _task_label,
+    _watchdog_meaning,
+)
 from supargus.forms import build_form_queue, format_form_queue
 from supargus.identity import identity_from_dict, sample_identity, save_identity, load_identity
 from supargus.mailer import gmail_smtp_config, load_smtp_config, save_smtp_config
@@ -449,6 +460,33 @@ class SupargusCoreTests(unittest.TestCase):
         self.assertEqual(_task_label("needs_form"), "Open website form")
         self.assertEqual(_review_status_label("pending"), "Needs your approval")
         self.assertIn("browser extension", _watchdog_meaning({"category": "browser"}))
+
+    def test_desktop_prioritizes_public_matches_over_review_only_brokers(self) -> None:
+        weak_match = {
+            "broker_name": "Name Only",
+            "status": "possible_match",
+            "confidence": "low",
+            "score": 20,
+            "matched_fields": ["name"],
+        }
+        strong_match = {
+            "broker_name": "Name And Postcode",
+            "status": "possible_match",
+            "confidence": "medium",
+            "score": 40,
+            "matched_fields": ["name", "postal_code"],
+        }
+        request_only = {
+            "broker_name": "Blocked Broker",
+            "status": "fetch_error",
+            "action_mode": "request_only",
+        }
+        ordered = sorted([weak_match, strong_match], key=_broker_match_strength, reverse=True)
+        self.assertEqual(ordered[0]["broker_name"], "Name And Postcode")
+        self.assertTrue(_broker_is_public_match(strong_match))
+        self.assertFalse(_broker_is_public_match(request_only))
+        self.assertTrue(_broker_is_review_only(request_only))
+        self.assertIn("postal code", _broker_match_row(strong_match)[1])
 
     def test_cli_app_is_desktop_and_web_is_fallback(self) -> None:
         parser = build_parser()
