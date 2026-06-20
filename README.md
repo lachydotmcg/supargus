@@ -65,6 +65,18 @@ When requests are prepared or imported into the tracker, Supargus now gives each
 
 The tracker also stores the specific identifiers requested for removal and the next follow-up date. This makes the app feel closer to a removal-service dashboard while keeping the records local.
 
+## Local Action Plan
+
+After a guided scan or workflow run, Supargus writes `workspace/action_plan.json`. The plan groups the next steps into:
+
+- verified scan findings to review
+- request-only brokers where private databases cannot be searched directly
+- email drafts ready for preview
+- manual opt-out forms to complete
+- follow-ups that are due
+
+This is the local equivalent of a removal-service dashboard queue: it tells you what can be automated, what needs review, and what must remain manual.
+
 ## Quick Start
 
 ```bash
@@ -106,6 +118,7 @@ supargus shortcut install --workspace workspace
 | Takedown Studio | Generates opt-out, deletion, do-not-sell/share, and follow-up request drafts. |
 | Mail Runner | Previews and sends reviewed requests through SMTP or Gmail app-password config. |
 | Form Queue | Tracks brokers that require manual web forms, with open/copy/mark-submitted controls. |
+| Action Plan | Turns scan, request, tracker, and form outputs into a prioritized local cleanup queue. |
 | Custom Removals | Adds arbitrary URLs outside the broker registry and prepares local removal drafts. |
 | Compliance Tracker | Tracks submitted, waiting, confirmed, denied, due, and follow-up states. |
 | Monitor | Diffs recurring scans for new matches, clears, and reappearances. |

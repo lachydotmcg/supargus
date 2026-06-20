@@ -42,6 +42,7 @@
 - [x] desktop scans attempt lightweight broker verification by default
 - [x] request-only takedown path for brokers that cannot be directly searched
 - [x] local request IDs, status explanations, and timeline payloads
+- [x] local action plan queue from scan, request, tracker, and form artifacts
 - [ ] editable review queue
 - [ ] request status editing from the app
 - [ ] broker detail drawers

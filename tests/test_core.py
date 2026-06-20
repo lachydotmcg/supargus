@@ -9,6 +9,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import patch
 
+from supargus.action_plan import build_action_plan, write_action_plan
 from supargus.app import build_state, render_dashboard, run_action
 from supargus.broker import build_search_url, score_broker_page, search_brokers
 from supargus.bundle import export_bundle
@@ -186,6 +187,43 @@ class SupargusCoreTests(unittest.TestCase):
             with patch("supargus.app.search_brokers", return_value=[]) as mocked:
                 run_action(Path(tmp), {"action": "broker_scan", "workspace": tmp, "identity": str(identity), "fetch": True})
         self.assertTrue(mocked.call_args.kwargs["fetch"])
+
+    def test_action_plan_builds_next_steps_from_workspace(self) -> None:
+        profile = sample_identity()
+        broker = load_default_brokers()[0]
+        match = BrokerMatch(
+            broker_id=broker.id,
+            broker_name=broker.name,
+            status="possible_match",
+            confidence="high",
+            score=90,
+            search_url="https://example.com/search",
+            evidence_url="https://example.com/profile",
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "broker_matches.json").write_text(
+                json.dumps({"matches": [match.__dict__], "summary": {"checked": 1, "possible_matches": 1}}),
+                encoding="utf-8",
+            )
+            requests, _ = prepare_requests([match], [broker], profile, root / "requests")
+            build_form_queue(requests, root / "forms" / "forms.json")
+            import_requests(requests, root / "tracker.json")
+            plan, path = write_action_plan(root)
+            plan_exists = path.exists()
+            state = build_state(root)
+        categories = {item["category"] for item in plan["items"]}
+        self.assertTrue(plan_exists)
+        self.assertIn("verified_scan", categories)
+        self.assertIn("manual_form", categories)
+        self.assertEqual(state["summary"]["action_items"], plan["summary"]["total"])
+
+    def test_app_action_plan_action_writes_plan(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            result = run_action(Path(tmp), {"action": "action_plan", "workspace": tmp})
+            plan = build_action_plan(tmp)
+        self.assertEqual(result["action_items"], 0)
+        self.assertEqual(plan["summary"]["total"], 0)
 
     def test_gmail_smtp_config_roundtrip(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

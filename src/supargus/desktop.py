@@ -41,6 +41,7 @@ DESKTOP_ACTIONS: tuple[tuple[str, str, str], ...] = (
     ("watchdog", "Scan this PC", "Look for proxy, extension, startup, and bandwidth-sharing signals."),
     ("prepare_requests", "Prepare removals", "Create readable takedown drafts from broker matches."),
     ("form_queue", "Build form queue", "Collect brokers that need manual opt-out forms."),
+    ("action_plan", "Build action plan", "Turn scan, request, tracker, and form outputs into next steps."),
     ("mail_preview", "Preview emails", "Review request emails before anything is sent."),
     ("mail_send", "Send reviewed emails", "Send approved requests through your SMTP or Gmail app password config."),
     ("tracker_import", "Import tracker", "Track requests, status, and follow-up dates."),
@@ -143,6 +144,7 @@ class SupargusDesktop:
             "matches": tk.StringVar(value="0"),
             "watchdog": tk.StringVar(value="0"),
             "request_only": tk.StringVar(value="0"),
+            "action_items": tk.StringVar(value="0"),
             "changes": tk.StringVar(value="0"),
             "requests": tk.StringVar(value="0"),
             "bundle": tk.StringVar(value="0 B"),
@@ -355,6 +357,7 @@ class SupargusDesktop:
         for label, var in (
             ("Possible matches", self.metric_vars["matches"]),
             ("Request-only brokers", self.metric_vars["request_only"]),
+            ("Action plan", self.metric_vars["action_items"]),
             ("Watchdog findings", self.metric_vars["watchdog"]),
             ("Draft requests", self.metric_vars["requests"]),
             ("Evidence bundle", self.metric_vars["bundle"]),
@@ -369,6 +372,7 @@ class SupargusDesktop:
         page.columnconfigure(0, weight=1)
         page.columnconfigure(1, weight=1)
         page.rowconfigure(2, weight=1)
+        page.rowconfigure(3, weight=1)
         self._section_header(page, "First privacy check", "A guided pass from local setup to reviewed cleanup action.")
 
         checklist = self._card(page, 1, 0, rowspan=2)
@@ -399,6 +403,9 @@ class SupargusDesktop:
         guide_button = self._button(actions, "Run guided scan", lambda: self.run_action("workflow"), primary=True)
         guide_button.pack(anchor="w", padx=20, pady=(0, 10))
         self.buttons.append(guide_button)
+        plan_button = self._button(actions, "Build action plan", lambda: self.run_action("action_plan"))
+        plan_button.pack(anchor="w", padx=20, pady=(0, 10))
+        self.buttons.append(plan_button)
         self._button(actions, "Open cleanup view", lambda: self.show_page("cleanup")).pack(anchor="w", padx=20, pady=(0, 18))
 
         privacy = self._card(page, 2, 1, padx=(0, 0), pady=(0, 14))
@@ -418,6 +425,16 @@ class SupargusDesktop:
         progress_body.columnconfigure(0, weight=1)
         progress_body.rowconfigure(0, weight=1)
         self.progress_tree = self._tree(progress_body, ("request_id", "broker", "status", "next_follow_up"))
+
+        plan_card = self._card(page, 3, 0, columnspan=2, padx=(0, 0), pady=(0, 0))
+        plan_card.rowconfigure(1, weight=1)
+        plan_card.columnconfigure(0, weight=1)
+        tk.Label(plan_card, text="Next actions", bg=COLORS["surface"], fg=COLORS["ink"], font=("Segoe UI", 14, "bold")).grid(row=0, column=0, sticky="w", padx=18, pady=(16, 8))
+        plan_body = tk.Frame(plan_card, bg=COLORS["surface"])
+        plan_body.grid(row=1, column=0, sticky="nsew", padx=18, pady=(0, 18))
+        plan_body.columnconfigure(0, weight=1)
+        plan_body.rowconfigure(0, weight=1)
+        self.action_tree = self._tree(plan_body, ("priority", "category", "title", "next_step"))
 
     def _home_action(self, parent: "tk.Widget", row: int, column: int, title: str, body: str, action: str, button_text: str, *, primary: bool = False) -> None:
         card = self._card(parent, row, column)
@@ -439,6 +456,7 @@ class SupargusDesktop:
             ("Scan brokers", "broker_scan", True),
             ("Prepare removals", "prepare_requests", False),
             ("Build form queue", "form_queue", False),
+            ("Build action plan", "action_plan", False),
             ("Preview emails", "mail_preview", False),
         ):
             button = self._button(actions, text, lambda value=action: self.run_action(value), primary=primary)
@@ -642,6 +660,7 @@ class SupargusDesktop:
         self.metric_vars["brokers"].set(str(summary["brokers_checked"]))
         self.metric_vars["matches"].set(str(summary["possible_matches"]))
         self.metric_vars["request_only"].set(str(summary.get("request_only", 0)))
+        self.metric_vars["action_items"].set(str(summary.get("action_items", 0)))
         self.metric_vars["watchdog"].set(str(summary["watchdog_findings"]))
         self.metric_vars["changes"].set(str(summary["scan_changes"]))
         self.metric_vars["requests"].set(str(summary["request_drafts"]))
@@ -657,6 +676,7 @@ class SupargusDesktop:
         self._populate_watchdog(self.state["findings"])
         self._populate_tracker(self.state["tracker"])
         self._populate_progress(self.state["tracker"])
+        self._populate_action_plan(self.state["action_plan"])
         self._populate_forms(self.state)
         self._populate_custom()
 
@@ -729,6 +749,25 @@ class SupargusDesktop:
                     item.get("broker_name", ""),
                     item.get("status", ""),
                     item.get("next_follow_up_at", ""),
+                ),
+            )
+
+    def _populate_action_plan(self, items: list[dict[str, Any]]) -> None:
+        if not hasattr(self, "action_tree"):
+            return
+        self._clear_tree(self.action_tree)
+        if not items:
+            self.action_tree.insert("", "end", values=("none", "start", "No action plan yet", "Run guided scan or Build action plan"))
+            return
+        for item in items[:8]:
+            self.action_tree.insert(
+                "",
+                "end",
+                values=(
+                    item.get("priority", ""),
+                    item.get("category", ""),
+                    item.get("title", ""),
+                    item.get("next_step", ""),
                 ),
             )
 

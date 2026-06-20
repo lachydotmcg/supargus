@@ -8,6 +8,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
+from .action_plan import ACTION_PLAN_NAME, write_action_plan
 from .broker import search_brokers
 from .bundle import export_bundle
 from .config import DEFAULT_CONFIG_NAME, load_config, save_default_config
@@ -52,6 +53,7 @@ def build_state(workspace: str | Path) -> dict:
     followups_path = root / "followups" / "requests.json"
     forms_path = root / "forms" / "forms.json"
     smtp_path = root / "smtp.gmail.json"
+    action_plan_path = root / ACTION_PLAN_NAME
 
     broker_summary = broker.get("summary", {}) if isinstance(broker, dict) else {}
     watchdog_summary = watchdog.get("summary", {}) if isinstance(watchdog, dict) else {}
@@ -60,6 +62,9 @@ def build_state(workspace: str | Path) -> dict:
     matches = broker.get("matches", []) if isinstance(broker, dict) else []
     findings = watchdog.get("findings", []) if isinstance(watchdog, dict) else []
     changes = monitor.get("changes", []) if isinstance(monitor, dict) else []
+    action_plan = _load_json(action_plan_path, {})
+    action_summary = action_plan.get("summary", {}) if isinstance(action_plan, dict) else {}
+    action_items = action_plan.get("items", []) if isinstance(action_plan, dict) else []
 
     return {
         "workspace": str(root.resolve()),
@@ -72,6 +77,7 @@ def build_state(workspace: str | Path) -> dict:
             "followups": str(followups_path),
             "forms": str(forms_path),
             "bundle": str(bundle_path),
+            "action_plan": str(action_plan_path),
             "config": str(Path(DEFAULT_CONFIG_NAME).resolve()),
             "smtp_config": str(smtp_path),
         },
@@ -84,6 +90,7 @@ def build_state(workspace: str | Path) -> dict:
             "followups": _path_exists(followups_path),
             "forms": _path_exists(forms_path),
             "bundle": _path_exists(bundle_path),
+            "action_plan": _path_exists(action_plan_path),
             "config": _path_exists(Path(DEFAULT_CONFIG_NAME)),
             "smtp_config": _path_exists(smtp_path),
         },
@@ -100,12 +107,15 @@ def build_state(workspace: str | Path) -> dict:
             "request_drafts": _count_requests(requests_path),
             "followup_drafts": _count_requests(followups_path),
             "form_tasks": len(load_form_queue(forms_path)),
+            "action_items": int(action_summary.get("total", 0) or 0),
+            "high_priority_actions": int(action_summary.get("high", 0) or 0),
             "bundle_size": bundle_path.stat().st_size if bundle_path.exists() else 0,
         },
         "matches": matches[:80],
         "findings": findings[:80],
         "changes": changes[:80],
         "tracker": tracker_records[:80],
+        "action_plan": action_items[:80],
     }
 
 
@@ -462,7 +472,11 @@ def run_action(workspace: Path, payload: dict) -> dict:
         config.bundle_path = str(root / "supargus_evidence_bundle.zip")
         config.limit = limit
         config.fetch = fetch
-        return run_workflow(config)
+        result = run_workflow(config)
+        plan, plan_path = write_action_plan(root)
+        result["action_plan"] = str(plan_path)
+        result["action_items"] = plan["summary"]["total"]
+        return result
 
     if action == "broker_scan":
         identity = load_identity(identity_path)
@@ -503,6 +517,10 @@ def run_action(workspace: Path, payload: dict) -> dict:
         requests = _load_requests(root / "requests" / "requests.json")
         records = import_requests(requests, root / "tracker.json")
         return {"records": len(records), "tracker": str(root / "tracker.json")}
+
+    if action == "action_plan":
+        plan, plan_path = write_action_plan(root)
+        return {"action_items": plan["summary"]["total"], "action_plan": str(plan_path)}
 
     if action == "followups":
         records = load_tracker(root / "tracker.json")
