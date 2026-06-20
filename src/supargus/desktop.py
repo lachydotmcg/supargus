@@ -170,10 +170,12 @@ def _score_next_actions(summary: dict[str, Any], exists: dict[str, Any] | None =
     approved = _summary_int(summary, "review_approved")
     watchdog = _summary_int(summary, "watchdog_findings")
 
+    if possible or request_only:
+        actions.append("Open Data Brokers to see the exact sites Supargus found or could not verify.")
     if forms:
-        actions.append("Open Removals, finish the manual broker forms, then mark each one submitted.")
+        actions.append("Use Open website/form or Copy request text for each broker that needs a manual form.")
     if pending:
-        actions.append("Open the Review Queue, approve only the drafts you trust, then send reviewed emails.")
+        actions.append("Approve only the email drafts you trust, then send reviewed emails with your Gmail app password.")
     elif drafts and not exists.get("review_queue"):
         actions.append("Build the Review Queue so each removal draft can be approved or skipped.")
     if possible and not drafts:
@@ -335,8 +337,13 @@ class SupargusDesktop:
         self.action_items: list[dict[str, Any]] = []
         self.review_items: list[dict[str, Any]] = []
         self.watchdog_items: list[dict[str, Any]] = []
+        self.broker_items: list[dict[str, Any]] = []
         self.guide_status_labels: dict[str, "tk.Label"] = {}
+        self.scan_step_labels: list["tk.Label"] = []
         self.state: dict[str, Any] = {}
+        self.current_page = ""
+        self.progress_token = 0
+        self.progress_step_index = 0
 
         workspace_path = Path(workspace)
         self.workspace_var = tk.StringVar(value=str(workspace_path))
@@ -532,6 +539,7 @@ class SupargusDesktop:
     def show_page(self, key: str) -> None:
         if key not in self.pages:
             return
+        self.current_page = key
         self.pages[key].tkraise()
         for name, button in self.nav_buttons.items():
             selected = name == key
@@ -766,9 +774,40 @@ class SupargusDesktop:
         self.home_main.grid(row=2, column=0, columnspan=2, sticky="nsew")
         self.home_main.columnconfigure(0, weight=2)
         self.home_main.columnconfigure(1, weight=1)
+        self.home_main.rowconfigure(1, weight=1)
+
+        scan_card = self._card(self.home_main, 0, 0, columnspan=2, padx=(0, 0), pady=(0, 14))
+        scan_card.columnconfigure(0, weight=1)
+        tk.Label(scan_card, text="Start here", bg=COLORS["surface"], fg=COLORS["muted"], font=("Segoe UI", 10, "bold")).grid(row=0, column=0, sticky="n", pady=(18, 2))
+        tk.Label(scan_card, text="Run a full privacy check", bg=COLORS["surface"], fg=COLORS["ink"], font=("Segoe UI", 18, "bold")).grid(row=1, column=0, sticky="n")
+        self.full_check_button = tk.Button(
+            scan_card,
+            text="Run full privacy check",
+            command=lambda: self.run_action("workflow"),
+            bg=COLORS["blue"],
+            fg="#ffffff",
+            activebackground=COLORS["blue_dark"],
+            activeforeground="#ffffff",
+            relief="flat",
+            bd=0,
+            padx=42,
+            pady=18,
+            cursor="hand2",
+            font=("Segoe UI", 16, "bold"),
+        )
+        self.full_check_button.grid(row=2, column=0, pady=(12, 10))
+        self.buttons.append(self.full_check_button)
+        tk.Label(scan_card, textvariable=self.scan_progress_var, bg=COLORS["surface"], fg=COLORS["muted"], font=("Segoe UI", 10), wraplength=720, justify="center").grid(row=3, column=0, sticky="ew", padx=24, pady=(0, 12))
+        steps = tk.Frame(scan_card, bg=COLORS["surface"])
+        steps.grid(row=4, column=0, sticky="ew", padx=20, pady=(0, 18))
+        for idx, title in enumerate(("Check broker sites", "Prepare removal options", "Scan this PC", "Build report")):
+            steps.columnconfigure(idx, weight=1)
+            label = tk.Label(steps, text=f"{idx + 1}. {title}", bg=COLORS["soft"], fg=COLORS["muted"], padx=10, pady=7, font=("Segoe UI", 9, "bold"))
+            label.grid(row=0, column=idx, sticky="ew", padx=(0 if idx == 0 else 8, 0))
+            self.scan_step_labels.append(label)
 
         left = tk.Frame(self.home_main, bg=COLORS["bg"])
-        left.grid(row=0, column=0, sticky="nsew")
+        left.grid(row=1, column=0, sticky="nsew")
         left.columnconfigure(0, weight=1)
         left.columnconfigure(1, weight=1)
 
@@ -795,28 +834,6 @@ class SupargusDesktop:
         ):
             self._insight_card(proof, title, body, mode).grid(row=0, column=idx, sticky="nsew", padx=(0 if idx == 0 else 8, 0))
 
-        hero = tk.Frame(score_card, bg=COLORS["surface"])
-        hero.grid(row=4, column=0, columnspan=2, sticky="ew", padx=24, pady=(0, 20))
-        hero.columnconfigure(0, weight=1)
-        self.full_check_button = tk.Button(
-            hero,
-            text="Run full privacy check",
-            command=lambda: self.run_action("workflow"),
-            bg=COLORS["blue"],
-            fg="#ffffff",
-            activebackground=COLORS["blue_dark"],
-            activeforeground="#ffffff",
-            relief="flat",
-            bd=0,
-            padx=34,
-            pady=16,
-            cursor="hand2",
-            font=("Segoe UI", 14, "bold"),
-        )
-        self.full_check_button.grid(row=0, column=0)
-        self.buttons.append(self.full_check_button)
-        tk.Label(hero, textvariable=self.scan_progress_var, bg=COLORS["surface"], fg=COLORS["muted"], font=("Segoe UI", 10)).grid(row=1, column=0, pady=(10, 0))
-
         self.action_badges: dict[str, tk.Label] = {}
         self._home_action(left, 1, 0, "Scan exposure", "Check data brokers and people-search sites.", "broker_scan", "Scan now", primary=True)
         self._home_action(left, 1, 1, "Prepare removals", "Create request drafts you can inspect.", "prepare_requests", "Prepare")
@@ -824,16 +841,13 @@ class SupargusDesktop:
         self._home_action(left, 2, 1, "Export receipts", "Bundle reports, drafts, and hashes.", "bundle", "Export")
 
         advisor = self._card(self.home_main, 0, 1, padx=(0, 0))
+        advisor.grid(row=1, column=1, sticky="nsew", padx=(0, 0), pady=(0, 14))
         advisor.columnconfigure(0, weight=1)
         tk.Label(advisor, text="Trusted advisor", bg=COLORS["surface"], fg=COLORS["muted"], font=("Segoe UI", 10, "bold")).pack(anchor="w", padx=22, pady=(16, 4))
         self.next_step_title = tk.Label(advisor, text="Run a privacy check", bg=COLORS["surface"], fg=COLORS["ink"], font=("Segoe UI", 15, "bold"), wraplength=250, justify="left")
         self.next_step_title.pack(anchor="w", padx=22)
         self.next_step_body = tk.Label(advisor, text="", bg=COLORS["surface"], fg=COLORS["muted"], font=("Segoe UI", 10), wraplength=260, justify="left")
         self.next_step_body.pack(anchor="w", padx=22, pady=(6, 14))
-        workflow_button = self._button(advisor, "Run full privacy check", lambda: self.run_action("workflow"), primary=True)
-        workflow_button.pack(anchor="w", padx=22, pady=(0, 14))
-        self.buttons.append(workflow_button)
-
         self.risk_panel = tk.Frame(advisor, bg=COLORS["red_soft"], highlightbackground=COLORS["red"], highlightthickness=1)
         self.risk_panel.pack(fill="x", padx=22, pady=(0, 14))
         risk_top = tk.Frame(self.risk_panel, bg=COLORS["red_soft"])
@@ -969,7 +983,7 @@ class SupargusDesktop:
     def _build_cleanup_page(self) -> None:
         page = self._page("cleanup")
         page.columnconfigure(0, weight=1)
-        page.rowconfigure(3, weight=1)
+        page.rowconfigure(4, weight=1)
         self._section_header(page, "Data Brokers", "Places where Supargus found or prepared a privacy-removal action for your data.")
 
         actions = tk.Frame(page, bg=COLORS["bg"])
@@ -983,10 +997,31 @@ class SupargusDesktop:
             button = self._button(actions, text, lambda value=action: self.run_action(value), primary=primary)
             button.pack(side="left", padx=(0, 10))
             self.buttons.append(button)
-        self._button(actions, "Open Removals", lambda: self.show_page("removals")).pack(side="left", padx=(0, 10))
+        for text, command, primary in (
+            ("Open website/form", self._open_selected_broker_action, True),
+            ("Copy request text", self._copy_selected_broker_request, False),
+        ):
+            button = self._button(actions, text, command, primary=primary)
+            button.pack(side="left", padx=(0, 10))
+            self.buttons.append(button)
+
+        gmail = tk.Frame(page, bg=COLORS["surface_alt"], highlightbackground=COLORS["line"], highlightthickness=1)
+        gmail.grid(row=2, column=0, sticky="ew", pady=(0, 12))
+        gmail.columnconfigure(1, weight=1)
+        gmail.columnconfigure(3, weight=1)
+        tk.Label(gmail, text="Send approved requests with Gmail", bg=COLORS["surface_alt"], fg=COLORS["ink"], font=("Segoe UI", 10, "bold")).grid(row=0, column=0, columnspan=6, sticky="w", padx=12, pady=(10, 0))
+        tk.Label(gmail, text="Email", bg=COLORS["surface_alt"], fg=COLORS["muted"], font=("Segoe UI", 9, "bold")).grid(row=1, column=0, sticky="w", padx=12, pady=10)
+        tk.Entry(gmail, textvariable=self.gmail_email_var, relief="solid", bd=1, font=("Segoe UI", 10)).grid(row=1, column=1, sticky="ew", padx=(0, 10), pady=10, ipady=5)
+        tk.Label(gmail, text="App password", bg=COLORS["surface_alt"], fg=COLORS["muted"], font=("Segoe UI", 9, "bold")).grid(row=1, column=2, sticky="w", padx=(0, 8), pady=10)
+        tk.Entry(gmail, textvariable=self.gmail_password_var, show="*", relief="solid", bd=1, font=("Segoe UI", 10)).grid(row=1, column=3, sticky="ew", padx=(0, 10), pady=10, ipady=5)
+        save_button = self._button(gmail, "Save Gmail", self._save_gmail_smtp)
+        save_button.grid(row=1, column=4, padx=(0, 8), pady=10)
+        send_button = self._button(gmail, "Send approved", lambda: self.run_action("mail_send"), primary=True)
+        send_button.grid(row=1, column=5, padx=(0, 12), pady=10)
+        self.buttons.extend([save_button, send_button])
 
         explain = tk.Frame(page, bg=COLORS["bg"])
-        explain.grid(row=2, column=0, sticky="ew", pady=(0, 12))
+        explain.grid(row=3, column=0, sticky="ew", pady=(0, 12))
         for idx in range(3):
             explain.columnconfigure(idx, weight=1)
         for idx, (title, body, mode) in enumerate(
@@ -998,7 +1033,7 @@ class SupargusDesktop:
         ):
             self._insight_card(explain, title, body, mode).grid(row=0, column=idx, sticky="nsew", padx=(0 if idx == 0 else 10, 0))
 
-        table_card = self._card(page, 3, 0, padx=(0, 0))
+        table_card = self._card(page, 4, 0, padx=(0, 0))
         table_card.rowconfigure(0, weight=1)
         table_card.columnconfigure(0, weight=1)
         self.broker_tree = self._tree(table_card, ("place", "what_was_found", "best_next_step", "open"))
@@ -1028,7 +1063,7 @@ class SupargusDesktop:
         body.grid(row=2, column=0, sticky="nsew", padx=18, pady=(0, 18))
         body.columnconfigure(0, weight=1)
         body.rowconfigure(0, weight=1)
-        self.watchdog_tree = self._tree(body, ("finding", "what_it_means", "safe_action"))
+        self.watchdog_tree = self._tree(body, ("finding", "what_it_means", "how_to_fix", "safe_action"))
 
     def _build_removals_page(self) -> None:
         page = self._page("removals")
@@ -1199,6 +1234,7 @@ class SupargusDesktop:
             "what_was_found": 300,
             "what_to_do": 240,
             "what_it_means": 340,
+            "how_to_fix": 340,
             "finding": 230,
             "safe_action": 220,
             "how_to_send": 140,
@@ -1254,8 +1290,8 @@ class SupargusDesktop:
             )
             if not approved:
                 return
-        self.scan_progress_var.set(self._action_progress_text(action))
         self._set_running(True, f"Running {action}...")
+        self._start_progress_steps(action)
         payload = self._payload(action)
         if extra:
             payload.update(extra)
@@ -1281,6 +1317,67 @@ class SupargusDesktop:
             "bundle": "Packaging reports, drafts, tracker state, and receipts...",
         }
         return labels.get(action, f"Running {action.replace('_', ' ')}...")
+
+    def _progress_sequence(self, action: str) -> tuple[str, ...]:
+        if action == "workflow":
+            return (
+                "Checking data broker and people-search pages for your profile...",
+                "Marking private or blocked brokers as request-only, without pretending they were verified...",
+                "Preparing removal emails and website form tasks for your review...",
+                "Scanning this PC for proxy, startup, and browser-extension privacy signals...",
+                "Building the plain-English report and local evidence receipts...",
+            )
+        if action == "watchdog":
+            return (
+                "Checking network proxy and listener settings...",
+                "Checking browser extensions with broad permissions...",
+                "Checking startup and installed-app privacy signals...",
+            )
+        if action in {"prepare_requests", "safe_actions"}:
+            return (
+                "Reading the broker findings...",
+                "Preparing removal emails and website form tasks...",
+                "Building approval and tracking records...",
+            )
+        return (self._action_progress_text(action),)
+
+    def _update_scan_step_labels(self, index: int, *, done_all: bool = False, failed: bool = False) -> None:
+        for idx, label in enumerate(getattr(self, "scan_step_labels", [])):
+            if failed and idx == index:
+                bg, fg = COLORS["red_soft"], COLORS["red"]
+            elif done_all or idx < index:
+                bg, fg = COLORS["green_soft"], COLORS["green"]
+            elif idx == index:
+                bg, fg = COLORS["yellow_soft"], COLORS["yellow_dark"]
+            else:
+                bg, fg = COLORS["soft"], COLORS["muted"]
+            label.configure(bg=bg, fg=fg)
+
+    def _start_progress_steps(self, action: str) -> None:
+        self.progress_token += 1
+        token = self.progress_token
+        self.progress_step_index = 0
+        steps = self._progress_sequence(action)
+        self.scan_progress_var.set(steps[0])
+        self._update_scan_step_labels(0)
+        self.root.after(1200, lambda: self._advance_progress_steps(token, steps))
+
+    def _advance_progress_steps(self, token: int, steps: tuple[str, ...]) -> None:
+        if token != self.progress_token:
+            return
+        self.progress_step_index = min(self.progress_step_index + 1, len(steps) - 1)
+        self.scan_progress_var.set(steps[self.progress_step_index])
+        self._update_scan_step_labels(min(self.progress_step_index, len(getattr(self, "scan_step_labels", [])) - 1))
+        if self.progress_step_index < len(steps) - 1:
+            self.root.after(1400, lambda: self._advance_progress_steps(token, steps))
+
+    def _finish_progress_steps(self, text: str, *, failed: bool = False) -> None:
+        self.progress_token += 1
+        self.scan_progress_var.set(text)
+        if failed:
+            self._update_scan_step_labels(max(0, self.progress_step_index), failed=True)
+        else:
+            self._update_scan_step_labels(0, done_all=True)
 
     def refresh(self) -> None:
         self.state = build_state(self.workspace_var.get())
@@ -1431,7 +1528,7 @@ class SupargusDesktop:
                 request_only.append(line)
 
         pc_findings = [
-            f"- {item.get('title', 'PC finding')}: {_watchdog_meaning(item)}"
+            f"- {item.get('title', 'PC finding')}: {_watchdog_meaning(item)} Next: {item.get('remediation') or _watchdog_safe_action(item)}"
             for item in self.state.get("findings", [])
         ]
 
@@ -1469,7 +1566,25 @@ class SupargusDesktop:
         text.grid(row=1, column=0, sticky="nsew", padx=18, pady=(0, 12))
         text.insert("1.0", report)
         text.configure(state="disabled")
-        self._button(popup, "Close", popup.destroy).grid(row=2, column=0, sticky="e", padx=18, pady=(0, 16))
+        controls = tk.Frame(popup, bg=COLORS["surface"])
+        controls.grid(row=2, column=0, sticky="ew", padx=18, pady=(0, 16))
+        controls.columnconfigure(0, weight=1)
+        self._button(controls, self._required_action_label(), lambda: self._continue_from_report(popup), primary=True).grid(row=0, column=0, sticky="w")
+        self._button(controls, "Close", popup.destroy).grid(row=0, column=1, sticky="e")
+
+    def _required_action_label(self) -> str:
+        summary = self.state.get("summary", {})
+        if _summary_int(summary, "possible_matches") or _summary_int(summary, "request_only"):
+            return "View Data Brokers"
+        if _summary_int(summary, "watchdog_findings"):
+            return "Review This PC"
+        if _summary_int(summary, "form_tasks") or _summary_int(summary, "review_pending"):
+            return "Open Removals"
+        return "Continue guided setup"
+
+    def _continue_from_report(self, popup: "tk.Toplevel") -> None:
+        popup.destroy()
+        self._open_required_action()
 
     def _open_required_action(self) -> None:
         summary = self.state.get("summary", {})
@@ -1553,23 +1668,96 @@ class SupargusDesktop:
             self.run_action("safe_actions")
 
     def _populate_brokers(self, items: list[dict[str, Any]]) -> None:
+        self.broker_items = []
         self._clear_tree(self.broker_tree)
         if not items:
             self.broker_tree.insert("", "end", values=("No scan yet", "Run full privacy check", "Start from Dashboard", ""))
             return
-        shown = 0
         for item in items:
             row = _broker_user_row(item)
             if not row:
                 continue
+            self.broker_items.append(item)
             self.broker_tree.insert(
                 "",
                 "end",
+                iid=f"broker-{len(self.broker_items) - 1}",
                 values=row,
             )
-            shown += 1
-        if not shown:
+        if not self.broker_items:
             self.broker_tree.insert("", "end", values=("No relevant broker hits", "No public matches or request-only tasks found", "Re-run later to monitor changes", ""))
+
+    def _selected_broker_item(self) -> dict[str, Any] | None:
+        if not hasattr(self, "broker_tree"):
+            return None
+        selected = self.broker_tree.selection()
+        if not selected and len(self.broker_items) == 1:
+            return self.broker_items[0]
+        if not selected:
+            return None
+        try:
+            index = int(selected[0].split("-", 1)[1])
+            return self.broker_items[index]
+        except Exception:
+            return None
+
+    def _matching_form_task(self, item: dict[str, Any]) -> FormTask | None:
+        broker_id = str(item.get("broker_id", ""))
+        broker_name = str(item.get("broker_name", ""))
+        urls = {str(item.get("evidence_url", "")), str(item.get("search_url", ""))}
+        matches = [
+            task
+            for task in self.form_tasks
+            if (broker_id and task.broker_id == broker_id) or (broker_name and task.broker_name == broker_name)
+        ]
+        for task in matches:
+            if task.profile_url and task.profile_url in urls:
+                return task
+        return sorted(matches, key=lambda task: task.updated_at or task.created_at)[-1] if matches else None
+
+    def _matching_review_item(self, item: dict[str, Any]) -> dict[str, Any] | None:
+        broker_id = str(item.get("broker_id", ""))
+        broker_name = str(item.get("broker_name", ""))
+        urls = {str(item.get("evidence_url", "")), str(item.get("search_url", ""))}
+        matches = [
+            review
+            for review in self.review_items
+            if (broker_id and review.get("broker_id") == broker_id) or (broker_name and review.get("broker_name") == broker_name)
+        ]
+        for review in matches:
+            if review.get("profile_url") in urls:
+                return review
+        return sorted(matches, key=lambda review: str(review.get("updated_at", "")))[-1] if matches else None
+
+    def _open_selected_broker_action(self) -> None:
+        item = self._selected_broker_item()
+        if not item:
+            self._log("Select a broker finding first.")
+            return
+        task = self._matching_form_task(item)
+        url = task.opt_out_url if task else str(item.get("evidence_url") or item.get("search_url") or "")
+        if not url:
+            self._log("Selected broker has no website URL to open.")
+            return
+        webbrowser.open(url)
+        self.status_var.set("Opened broker action")
+        self._log(f"Opened broker action for {item.get('broker_name', 'broker')}:\n{url}")
+
+    def _copy_selected_broker_request(self) -> None:
+        item = self._selected_broker_item()
+        if not item:
+            self._log("Select a broker finding first.")
+            return
+        task = self._matching_form_task(item)
+        if task:
+            self._copy_form_task_to_clipboard(task)
+            return
+        review = self._matching_review_item(item)
+        if review:
+            self._copy_review_item_to_clipboard(review)
+            return
+        self.status_var.set("Prepare removal options first")
+        self._log("No prepared request exists for that broker yet. Run Prepare removal options, then copy again.")
 
     def _populate_watchdog(self, items: list[dict[str, Any]]) -> None:
         self.watchdog_items = list(items)
@@ -1585,6 +1773,7 @@ class SupargusDesktop:
                 values=(
                     item.get("title", "PC finding"),
                     _watchdog_meaning(item),
+                    item.get("remediation") or _watchdog_safe_action(item),
                     _watchdog_safe_action(item),
                 ),
             )
@@ -1692,11 +1881,7 @@ class SupargusDesktop:
             return
         self.run_action("review_skip", {"request_id": item.get("request_id", "")})
 
-    def _copy_selected_review(self) -> None:
-        item = self._selected_review_item()
-        if not item:
-            self._log("Select a review item first.")
-            return
+    def _copy_review_item_to_clipboard(self, item: dict[str, Any]) -> None:
         path = Path(str(item.get("file_path", "")))
         body = path.read_text(encoding="utf-8") if path.exists() else ""
         destination = item.get("to_email") or item.get("opt_out_url") or ""
@@ -1713,6 +1898,13 @@ class SupargusDesktop:
         self.root.clipboard_append(text)
         self.status_var.set("Copied review draft")
         self._log(f"Copied review draft for {item.get('broker_name', '')}.")
+
+    def _copy_selected_review(self) -> None:
+        item = self._selected_review_item()
+        if not item:
+            self._log("Select a review item first.")
+            return
+        self._copy_review_item_to_clipboard(item)
 
     def _save_gmail_smtp(self) -> None:
         try:
@@ -1878,6 +2070,9 @@ class SupargusDesktop:
         if not task:
             self._log("Select a form task first.")
             return
+        self._copy_form_task_to_clipboard(task)
+
+    def _copy_form_task_to_clipboard(self, task: FormTask) -> None:
         text = (
             f"Broker: {task.broker_name}\n"
             f"Opt-out form: {task.opt_out_url}\n"
@@ -1976,13 +2171,13 @@ class SupargusDesktop:
                 self._log(f"{action} complete\n{json.dumps(value, indent=2)}")
                 self.refresh()
                 self._set_running(False, f"{action} complete")
-                self.scan_progress_var.set("Privacy check complete. Review the findings below.")
+                self._finish_progress_steps("Privacy check complete. Review only the relevant findings below.")
                 if action == "workflow":
                     self._show_plain_english_report()
             else:
                 self._log(f"ERROR {action}\n{value}")
                 self._set_running(False, f"{action} failed")
-                self.scan_progress_var.set(f"{action.replace('_', ' ')} failed. Check Advanced logs.")
+                self._finish_progress_steps(f"{action.replace('_', ' ')} failed. Check Advanced logs.", failed=True)
                 if messagebox:
                     messagebox.showerror("Supargus", str(value))
         self.root.after(100, self._drain_queue)
