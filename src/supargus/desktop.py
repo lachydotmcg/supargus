@@ -202,6 +202,7 @@ class SupargusDesktop:
             "address": tk.StringVar(),
             "city": tk.StringVar(),
             "region": tk.StringVar(),
+            "postal_code": tk.StringVar(),
             "country": tk.StringVar(),
             "jurisdiction": tk.StringVar(),
         }
@@ -289,6 +290,7 @@ class SupargusDesktop:
         side.grid_propagate(False)
 
         items = (
+            ("setup", "Setup"),
             ("home", "Dashboard"),
             ("guide", "Guide"),
             ("cleanup", "Cleanup"),
@@ -409,7 +411,7 @@ class SupargusDesktop:
         marker.grid(row=0, column=0, rowspan=2, sticky="nsw")
         self._pill(card, mode.upper(), bg=bg, fg=fg).grid(row=0, column=1, sticky="w", padx=14, pady=(12, 4))
         tk.Label(card, text=title, bg=COLORS["surface"], fg=COLORS["ink"], font=("Segoe UI", 11, "bold")).grid(row=1, column=1, sticky="w", padx=14)
-        tk.Label(card, text=body, bg=COLORS["surface"], fg=COLORS["muted"], font=("Segoe UI", 9), wraplength=230, justify="left").grid(row=2, column=1, sticky="w", padx=14, pady=(4, 12))
+        tk.Label(card, text=body, bg=COLORS["surface"], fg=COLORS["muted"], font=("Segoe UI", 9), wraplength=185, justify="left").grid(row=2, column=1, sticky="w", padx=14, pady=(4, 12))
         return card
 
     def _identity_exists(self) -> bool:
@@ -419,7 +421,10 @@ class SupargusDesktop:
             return True
         # Also accept workspace/identity.json as a fallback
         alt = Path(self.workspace_var.get()) / "identity.json"
-        return alt.exists()
+        if alt.exists():
+            self.identity_var.set(str(alt))
+            return True
+        return False
 
     def _pick_start_page(self) -> None:
         if self._identity_exists():
@@ -450,13 +455,14 @@ class SupargusDesktop:
 
         fields = [
             ("full_name", "Full name", "Your full legal name"),
-            ("aliases", "Aliases", "Other names, maiden names, nicknames — comma-separated"),
-            ("emails", "Email addresses", "All email addresses — comma-separated"),
-            ("usernames", "Usernames", "Forum handles, social usernames — comma-separated"),
-            ("phones", "Phone numbers", "Include country code e.g. +15551234567 — comma-separated"),
+            ("aliases", "Aliases", "Other names, maiden names, nicknames, comma-separated"),
+            ("emails", "Email addresses", "All email addresses, comma-separated"),
+            ("usernames", "Usernames", "Forum handles, social usernames, comma-separated"),
+            ("phones", "Phone numbers", "Include country code e.g. +15551234567, comma-separated"),
             ("address", "Street address", "House number and street name"),
             ("city", "City", ""),
             ("region", "State / Province", ""),
+            ("postal_code", "Postal code", ""),
             ("country", "Country", "2-letter code e.g. US, AU, GB"),
             ("jurisdiction", "Jurisdiction", "Privacy law that applies, e.g. US-CA, AU, EU-GDPR"),
         ]
@@ -468,7 +474,7 @@ class SupargusDesktop:
             entry = tk.Entry(card, textvariable=self.setup_vars[key], relief="solid", bd=1, font=("Segoe UI", 10))
             entry.grid(row=idx, column=1, sticky="ew", padx=(8, 22), pady=(14 if idx == 0 else 8, 0), ipady=6)
             if hint:
-                tk.Label(card, text=hint, bg=COLORS["surface"], fg=COLORS["muted"], font=("Segoe UI", 8)).grid(
+                tk.Label(card, text=hint, bg=COLORS["surface"], fg=COLORS["muted"], font=("Segoe UI", 8), wraplength=210, justify="left").grid(
                     row=idx, column=2, sticky="w", padx=(0, 22), pady=(14 if idx == 0 else 8, 0)
                 )
 
@@ -495,6 +501,7 @@ class SupargusDesktop:
                     line1=v["address"].get().strip(),
                     city=v["city"].get().strip(),
                     region=v["region"].get().strip(),
+                    postal_code=v["postal_code"].get().strip(),
                     country=v["country"].get().strip(),
                 )
             )
@@ -505,7 +512,16 @@ class SupargusDesktop:
             "emails": _split(v["emails"].get()),
             "usernames": _split(v["usernames"].get()),
             "phones": _split(v["phones"].get()),
-            "addresses": [{"line1": a.line1, "city": a.city, "region": a.region, "country": a.country} for a in addresses],
+            "addresses": [
+                {
+                    "line1": a.line1,
+                    "city": a.city,
+                    "region": a.region,
+                    "postal_code": a.postal_code,
+                    "country": a.country,
+                }
+                for a in addresses
+            ],
             "jurisdiction": v["jurisdiction"].get().strip(),
         }
 
@@ -548,7 +564,7 @@ class SupargusDesktop:
             justify="left",
         ).pack(anchor="w", pady=(4, 0))
 
-        # Empty state — shown when no identity exists
+        # Empty state shown when no identity exists.
         self.home_empty = tk.Frame(page, bg=COLORS["bg"])
         self.home_empty.grid(row=1, column=0, columnspan=2, sticky="nsew")
         empty_card = tk.Frame(self.home_empty, bg=COLORS["surface"], highlightbackground=COLORS["line_strong"], highlightthickness=1)
@@ -566,7 +582,7 @@ class SupargusDesktop:
         ).pack(anchor="w", padx=24, pady=(0, 16))
         self._button(empty_card, "Create your privacy profile", lambda: self.show_page("setup"), primary=True).pack(anchor="w", padx=24, pady=(0, 22))
 
-        # Main content — hidden until identity exists
+        # Main content hidden until identity exists.
         self.home_main = tk.Frame(page, bg=COLORS["bg"])
         self.home_main.grid(row=2, column=0, columnspan=2, sticky="nsew")
         self.home_main.columnconfigure(0, weight=2)
@@ -593,9 +609,9 @@ class SupargusDesktop:
             proof.columnconfigure(idx, weight=1)
         for idx, (title, body, mode) in enumerate(
             (
-                ("Public people-search hits", "Supargus checks pages it can reach and shows the evidence it found.", "verified"),
-                ("Private broker databases", "When a broker cannot be searched, the app creates a request-only removal path.", "request"),
-                ("This PC checks", "Proxy and bandwidth-sharing signals are local findings for you to review.", "local"),
+                ("Public hits", "Checks reachable pages and shows evidence.", "verified"),
+                ("Private brokers", "Creates request-only opt-out paths.", "request"),
+                ("This PC", "Flags local proxy and bandwidth signals.", "local"),
             )
         ):
             self._insight_card(proof, title, body, mode).grid(row=0, column=idx, sticky="nsew", padx=(0 if idx == 0 else 8, 0))
@@ -1488,8 +1504,14 @@ class SupargusDesktop:
         selected = filedialog.askdirectory(initialdir=self.workspace_var.get() or ".")
         if selected:
             self.workspace_var.set(selected)
-            if not self.identity_var.get():
-                self.identity_var.set(str(Path(selected) / "identity.sgvault"))
+            identity_json = Path(selected) / "identity.json"
+            identity_vault = Path(selected) / "identity.sgvault"
+            if identity_json.exists():
+                self.identity_var.set(str(identity_json))
+            elif identity_vault.exists():
+                self.identity_var.set(str(identity_vault))
+            elif not Path(self.identity_var.get()).exists():
+                self.identity_var.set(str(identity_json))
             self.refresh()
 
     def _choose_identity(self) -> None:
